@@ -1,15 +1,15 @@
 import copy
-import gym
+import gymnasium as gym
 import time
 import datetime
 import numpy as np
 import sys
 import itertools
 import torch
-from babyai.evaluate import batch_evaluate
-import babyai.utils as utils
-from babyai.rl import DictList
-from babyai.model import ACModel
+from toddler_ai.utils.evaluate import batch_evaluate
+import toddler_ai.utils as utils
+from toddler_ai.utils.dictlist import DictList
+from toddler_ai.models.ac_model import ACModel
 import multiprocessing
 import os
 import json

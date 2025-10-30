@@ -1,6 +1,6 @@
 import numpy as np
-import gym
-from gym_minigrid.wrappers import RGBImgPartialObsWrapper
+import gymnasium as gym
+from minigrid.wrappers import RGBImgPartialObsWrapper
 
 
 # Returns the performance of the agent on the environment for a particular number of episodes.
@@ -17,10 +17,12 @@ def evaluate(agent, env, episodes, model_agent=True, offsets=None):
         if offsets:
             # Ensuring test on seed offsets that generated successful demonstrations
             while count != offsets[i]:
-                obs = env.reset()
+                obs_result = env.reset()
+                obs = obs_result[0] if isinstance(obs_result, tuple) else obs_result
                 count += 1
 
-        obs = env.reset()
+        obs_result = env.reset()
+        obs = obs_result[0] if isinstance(obs_result, tuple) else obs_result
         agent.on_reset()
         done = False
 
@@ -30,7 +32,8 @@ def evaluate(agent, env, episodes, model_agent=True, offsets=None):
         while not done:
             action = agent.act(obs)['action']
             obss.append(obs)
-            obs, reward, done, _ = env.step(action)
+            obs, reward, terminated, truncated, _ = env.step(action)
+            done = terminated or truncated
             agent.analyze_feedback(reward, done)
             num_frames += 1
             returnn += reward
@@ -62,10 +65,14 @@ class ManyEnvs(gym.Env):
         self.done = [False] * len(self.envs)
 
     def seed(self, seeds):
-        [env.seed(seed) for seed, env in zip(seeds, self.envs)]
+        # Gymnasium uses reset(seed=...) instead of env.seed()
+        self.seeds = seeds
 
     def reset(self):
-        many_obs = [env.reset() for env in self.envs]
+        many_obs = [env.reset(seed=seed) if hasattr(self, 'seeds') else env.reset()
+                    for env, seed in zip(self.envs, getattr(self, 'seeds', [None]*len(self.envs)))]
+        # Extract observations from (obs, info) tuples
+        many_obs = [obs if isinstance(obs, dict) else obs[0] for obs in many_obs]
         self.done = [False] * len(self.envs)
         return many_obs
 
@@ -73,7 +80,8 @@ class ManyEnvs(gym.Env):
         self.results = [env.step(action) if not done else self.last_results[i]
                         for i, (env, action, done)
                         in enumerate(zip(self.envs, actions, self.done))]
-        self.done = [result[2] for result in self.results]
+        # Gymnasium returns (obs, reward, terminated, truncated, info) - 5 values
+        self.done = [result[2] or result[3] for result in self.results]  # terminated or truncated
         self.last_results = self.results
         return zip(*self.results)
 
@@ -121,7 +129,8 @@ def batch_evaluate(agent, env_name, seed, episodes, return_obss_actions=False, p
                     if not already_done[i]:
                         obss[i].append(many_obs[i])
                         actions[i].append(action[i].item())
-            many_obs, reward, done, _ = env.step(action)
+            many_obs, reward, terminated, truncated, info = env.step(action)
+            done = [t or tr for t, tr in zip(terminated, truncated)]
             agent.analyze_feedback(reward, done)
             done = np.array(done)
             just_done = done & (~already_done)

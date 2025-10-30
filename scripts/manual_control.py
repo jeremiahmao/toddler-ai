@@ -3,11 +3,11 @@
 import time
 import argparse
 import numpy as np
-import gym
-import gym_minigrid
-from gym_minigrid.wrappers import *
-from gym_minigrid.window import Window
-import babyai
+import gymnasium as gym
+import minigrid
+from minigrid.wrappers import *
+from minigrid.window import Window
+import toddler_ai
 
 def redraw(img):
     if not args.agent_view:

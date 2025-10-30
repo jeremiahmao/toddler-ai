@@ -1,8 +1,9 @@
 from abc import ABC, abstractmethod
 import torch
+import numpy as np
 from .. import utils
-from babyai.bot import Bot
-from babyai.model import ACModel
+from minigrid.utils.baby_ai_bot import BabyAIBot
+from toddler_ai.models.ac_model import ACModel
 from random import Random
 
 
@@ -75,7 +76,8 @@ class ModelAgent(Agent):
         return self.act_batch([obs])
 
     def analyze_feedback(self, reward, done):
-        if isinstance(done, tuple):
+        if isinstance(done, (tuple, list)):
+            done = np.array(done)
             for i in range(len(done)):
                 if done[i]:
                     self.memory[i, :] *= 0.
@@ -141,10 +143,12 @@ class BotAgent:
     def __init__(self, env):
         """An agent based on a GOFAI bot."""
         self.env = env
-        self.on_reset()
+        self.bot = None
 
     def on_reset(self):
-        self.bot = Bot(self.env)
+        # Bot needs access to unwrapped environment for width, height, etc.
+        # Environment must be reset before creating Bot (so instrs is available)
+        self.bot = BabyAIBot(self.env.unwrapped)
 
     def act(self, obs=None, update_internal_state=True, *args, **kwargs):
         action = self.bot.replan()

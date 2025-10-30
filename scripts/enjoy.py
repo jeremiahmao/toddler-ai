@@ -5,10 +5,10 @@ Visualize the performance of a model on a given environment.
 """
 
 import argparse
-import gym
+import gymnasium as gym
 import time
 
-import babyai.utils as utils
+import toddler_ai.utils as utils
 
 # Parse arguments
 

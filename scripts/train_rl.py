@@ -8,21 +8,21 @@ import os
 import logging
 import csv
 import json
-import gym
+import gymnasium as gym
 import time
 import datetime
 import torch
 import numpy as np
 import subprocess
 
-import babyai
-import babyai.utils as utils
-import babyai.rl
-from babyai.arguments import ArgumentParser
-from babyai.model import ACModel
-from babyai.evaluate import batch_evaluate
-from babyai.utils.agent import ModelAgent
-from gym_minigrid.wrappers import RGBImgPartialObsWrapper
+import toddler_ai
+import toddler_ai.utils as utils
+import toddler_ai.rl
+from toddler_ai.arguments import ArgumentParser
+from toddler_ai.model import ACModel
+from toddler_ai.evaluate import batch_evaluate
+from toddler_ai.utils.agent import ModelAgent
+from minigrid.wrappers import RGBImgPartialObsWrapper
 
 
 # Parse arguments

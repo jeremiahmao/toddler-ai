@@ -13,7 +13,7 @@ make_agent_demos.py at your cluster as --job-script and the number of jobs as --
 """
 
 import argparse
-import gym
+import gymnasium as gym
 import logging
 import sys
 import subprocess
@@ -23,7 +23,7 @@ import numpy as np
 import blosc
 import torch
 
-import babyai.utils as utils
+import toddler_ai.utils as utils
 
 # Parse arguments
 
@@ -88,10 +88,9 @@ def generate_demos(n_episodes, valid, seed, shift=0):
         done = False
         if just_crashed:
             logger.info("reset the environment to find a mission that the bot can solve")
-            env.reset()
+            obs, info = env.reset()
         else:
-            env.seed(seed + len(demos))
-        obs = env.reset()
+            obs, info = env.reset(seed=seed + len(demos))
         agent.on_reset()
 
         actions = []
@@ -104,7 +103,8 @@ def generate_demos(n_episodes, valid, seed, shift=0):
                 action = agent.act(obs)['action']
                 if isinstance(action, torch.Tensor):
                     action = action.item()
-                new_obs, reward, done, _ = env.step(action)
+                new_obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
                 agent.analyze_feedback(reward, done)
 
                 actions.append(action)

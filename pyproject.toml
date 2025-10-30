@@ -1,5 +1,3 @@
-# Package ######################################################################
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -7,106 +5,47 @@ build-backend = "hatchling.build"
 [project]
 name = "toddler-ai"
 version = "0.1.0"
-description = "Grounded language learning for embodied AI agents combining Minigrid environments with BabyAI training infrastructure"
-readme = "README.md"
+description = "Grounded language learning for embodied AI agents"
 requires-python = ">= 3.10"
-authors = [
-    { name = "Jeremiah Mao", email = "jeremiahmao@mac.mynetworksettings.com" }
-]
-license = { text = "MIT License" }
-keywords = ["reinforcement-learning", "language", "grounded-learning", "embodied-ai", "gymnasium"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Intended Audience :: Science/Research",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-]
 
 dependencies = [
-    # Core dependencies - updated from both repos
     "numpy>=1.24.0",
-    "gymnasium>=0.29.0",  # Updated from gym
+    "gymnasium>=0.29.0",
+    "minigrid>=2.3.0",
     "pygame>=2.4.0",
-    "torch>=2.0.0",  # Updated from PyTorch 0.4.1
-    "blosc>=1.11.0",  # Updated from 1.5.1
+    "torch>=2.0.0",
+    "blosc>=1.11.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.1",
-    "pytest-mock>=3.10.0",
     "pre-commit>=3.0.0",
     "black>=24.0.0",
     "isort>=5.13.0",
     "flake8>=7.0.0",
-    "pyright>=1.1.0",
 ]
 training = [
-    "tensorboard>=2.14.0",  # Updated from tensorboardX
+    "tensorboard>=2.14.0",
     "matplotlib>=3.7.0",
 ]
-all = ["toddler-ai[dev,training]"]
 
-[project.urls]
-Homepage = "https://github.com/jeremiahmao/toddler-ai"
-Repository = "https://github.com/jeremiahmao/toddler-ai"
-Issues = "https://github.com/jeremiahmao/toddler-ai/issues"
-
-# Hatchling configuration
 [tool.hatch.build.targets.wheel]
 packages = ["src/toddler_ai"]
 
-# Linters and Test tools #######################################################
-
 [tool.black]
 line-length = 100
-target-version = ["py310", "py311", "py312"]
 
 [tool.isort]
-atomic = true
 profile = "black"
 line_length = 100
-src_paths = ["src/toddler_ai", "scripts", "tests"]
-add_imports = ["from __future__ import annotations"]
-
-[tool.pyright]
-include = ["src/toddler_ai/**", "scripts/**"]
-exclude = ["**/node_modules", "**/__pycache__"]
-strict = []
-typeCheckingMode = "basic"
-pythonVersion = "3.10"
-pythonPlatform = "All"
-enableTypeIgnoreComments = true
-reportMissingImports = "warning"
-reportUnknownMemberType = "none"
-reportUnknownParameterType = "none"
-reportUnknownVariableType = "none"
-reportUnknownArgumentType = "none"
-reportPrivateUsage = "warning"
-reportUntypedFunctionDecorator = "none"
-reportMissingTypeStubs = false
-reportUnboundVariable = "warning"
-reportGeneralTypeIssues = "none"
-reportPrivateImportUsage = "none"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-python_files = ["test_*.py"]
-python_classes = ["Test*"]
-python_functions = ["test_*"]
-filterwarnings = [
-    "ignore::DeprecationWarning",
-]
 
-# UV-specific configuration (optional, for dependency resolution)
-[tool.uv]
-dev-dependencies = [
+[dependency-groups]
+dev = [
     "pytest>=7.0.1",
-    "pytest-mock>=3.10.0",
     "pre-commit>=3.0.0",
     "black>=24.0.0",
     "isort>=5.13.0",

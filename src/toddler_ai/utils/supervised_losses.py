@@ -2,7 +2,7 @@ import torch
 
 import torch.nn.functional as F
 import numpy
-from babyai.rl.utils import DictList
+from toddler_ai.utils.dictlist import DictList
 
 # dictionary that defines what head is required for each extra info used for auxiliary supervision
 required_heads = {'seen_state': 'binary',
