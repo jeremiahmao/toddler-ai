@@ -1,6 +1,9 @@
-from gym_minigrid.minigrid import *
-from babyai.levels.verifier import *
-from babyai.levels.verifier import (ObjDesc, pos_next_to,
+from minigrid.core.world_object import *
+from minigrid.core.constants import *
+from minigrid.core.actions import Actions
+from minigrid.core.grid import Grid
+from minigrid.envs.babyai.core.verifier import *
+from minigrid.envs.babyai.core.verifier import (ObjDesc, pos_next_to,
                                     GoToInstr, OpenInstr, PickupInstr, PutNextInstr, BeforeInstr, AndInstr, AfterInstr)
 
 

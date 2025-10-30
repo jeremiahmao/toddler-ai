@@ -2,9 +2,10 @@ from abc import ABC, abstractmethod
 import torch
 import numpy
 
-from babyai.rl.format import default_preprocess_obss
-from babyai.rl.utils import DictList, ParallelEnv
-from babyai.rl.utils.supervised_losses import ExtraInfoCollector
+from toddler_ai.utils.format import default_preprocess_obss
+from toddler_ai.utils.dictlist import DictList
+from toddler_ai.utils.penv import ParallelEnv
+from toddler_ai.utils.supervised_losses import ExtraInfoCollector
 
 
 class BaseAlgo(ABC):

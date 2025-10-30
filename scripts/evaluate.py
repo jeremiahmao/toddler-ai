@@ -5,12 +5,12 @@ Evaluate a trained model or bot
 """
 
 import argparse
-import gym
+import gymnasium as gym
 import time
 import datetime
 
-import babyai.utils as utils
-from babyai.evaluate import evaluate_demo_agent, batch_evaluate, evaluate
+import toddler_ai.utils as utils
+from toddler_ai.utils.evaluate import evaluate_demo_agent, batch_evaluate, evaluate
 # Parse arguments
 
 parser = argparse.ArgumentParser()
@@ -41,7 +41,7 @@ def main(args, seed, episodes):
     # Define agent
 
     env = gym.make(args.env)
-    env.seed(seed)
+    # Gymnasium uses reset(seed=...) instead of env.seed()
     agent = utils.load_agent(env, args.model, args.demos, args.demos_origin, args.argmax, args.env)
     if args.model is None and args.episodes > len(agent.demos):
         # Set the number of episodes to be the number of demos

@@ -7,16 +7,16 @@ Script to train agent through imitation learning using demonstrations.
 import os
 import csv
 import copy
-import gym
+import gymnasium as gym
 import time
 import datetime
 import numpy as np
 import sys
 import logging
 import torch
-from babyai.arguments import ArgumentParser
-import babyai.utils as utils
-from babyai.imitation import ImitationLearning
+from toddler_ai.utils.arguments import ArgumentParser
+import toddler_ai.utils as utils
+from toddler_ai.algorithms.imitation import ImitationLearning
 
 
 # Parse arguments

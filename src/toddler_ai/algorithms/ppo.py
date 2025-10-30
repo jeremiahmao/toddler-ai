@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 
 
-from babyai.rl.algos.base import BaseAlgo
+from toddler_ai.algorithms.base import BaseAlgo
 
 
 class PPOAlgo(BaseAlgo):

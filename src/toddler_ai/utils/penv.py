@@ -1,5 +1,5 @@
 from multiprocessing import Process, Pipe
-import gym
+import gymnasium as gym
 
 def worker(conn, env):
     while True:
