@@ -84,6 +84,10 @@ class PPOAlgo(BaseAlgo):
                     # Create a sub-batch of experience
                     sb = exps[inds + i]
 
+                    # Normalize advantages for this sub-batch (critical for stability)
+                    # This prevents exploding gradients with high reward scales
+                    sb_advantage_normalized = (sb.advantage - sb.advantage.mean()) / (sb.advantage.std() + 1e-8)
+
                     # Compute loss
 
                     model_results = self.acmodel(sb.obs, memory * sb.mask)
@@ -95,8 +99,8 @@ class PPOAlgo(BaseAlgo):
                     entropy = dist.entropy().mean()
 
                     ratio = torch.exp(dist.log_prob(sb.action) - sb.log_prob)
-                    surr1 = ratio * sb.advantage
-                    surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb.advantage
+                    surr1 = ratio * sb_advantage_normalized
+                    surr2 = torch.clamp(ratio, 1.0 - self.clip_eps, 1.0 + self.clip_eps) * sb_advantage_normalized
                     policy_loss = -torch.min(surr1, surr2).mean()
 
                     value_clipped = sb.value + torch.clamp(value - sb.value, -self.clip_eps, self.clip_eps)

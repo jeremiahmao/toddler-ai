@@ -7,6 +7,12 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from toddler_ai.utils.supervised_losses import required_heads
 from toddler_ai.models.rl_base import RecurrentACModel
 
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    SENTENCE_TRANSFORMERS_AVAILABLE = False
+
 
 # From https://github.com/ikostrikov/pytorch-a2c-ppo-acktr/blob/master/model.py
 def initialize_parameters(m):
@@ -16,6 +22,41 @@ def initialize_parameters(m):
         m.weight.data *= 1 / torch.sqrt(m.weight.data.pow(2).sum(1, keepdim=True))
         if m.bias is not None:
             m.bias.data.fill_(0)
+
+
+class MiniLMProjection(nn.Module):
+    """Projection layer for pre-computed MiniLM embeddings.
+
+    Takes pre-computed MiniLM embeddings (384-dim) and projects them to instr_dim.
+    This allows gradients to flow through the projection while keeping MiniLM frozen.
+
+    The actual MiniLM encoding happens in the preprocessor to keep it outside
+    the computation graph (frozen), but the projection is trainable.
+    """
+    def __init__(self, instr_dim=128, minilm_dim=384):
+        super().__init__()
+        self.minilm_dim = minilm_dim
+        self.instr_dim = instr_dim
+
+        # Trainable projection from MiniLM dims to instr_dim
+        # This will receive gradients during backprop
+        self.projection = nn.Linear(minilm_dim, instr_dim)
+        self.projection.apply(initialize_parameters)
+
+    def forward(self, minilm_embeddings):
+        """Project MiniLM embeddings to instruction dimension.
+
+        Args:
+            minilm_embeddings: Pre-computed MiniLM embeddings (batch_size, 384)
+                              These are frozen (no grad from MiniLM itself)
+                              but treated as leaf tensors that can pass gradients
+                              to the projection layer
+
+        Returns:
+            Tensor of shape (batch_size, instr_dim) with gradients enabled
+        """
+        # Project to instr_dim - this operation has gradients!
+        return self.projection(minilm_embeddings)
 
 
 # Inspired by FiLMedBlock from https://arxiv.org/abs/1709.07871
@@ -111,7 +152,13 @@ class ACModel(nn.Module, RecurrentACModel):
 
         # Define instruction embedding
         if self.use_instr:
-            if self.lang_model in ['gru', 'bigru', 'attgru']:
+            if self.lang_model == 'minilm':
+                # MiniLM projection for grounded toddler learning
+                # The MiniLM encoding happens in preprocessor (frozen)
+                # This projection layer is trainable and receives gradients
+                self.minilm_projection = MiniLMProjection(instr_dim=self.instr_dim)
+                self.final_instr_dim = self.instr_dim
+            elif self.lang_model in ['gru', 'bigru', 'attgru']:
                 self.word_embedding = nn.Embedding(obs_space["instr"], self.instr_dim)
                 if self.lang_model in ['gru', 'bigru', 'attgru']:
                     gru_dim = self.instr_dim
@@ -216,7 +263,13 @@ class ACModel(nn.Module, RecurrentACModel):
 
     def forward(self, obs, memory, instr_embedding=None):
         if self.use_instr and instr_embedding is None:
-            instr_embedding = self._get_instr_embedding(obs.instr)
+            # Get instruction embedding - either from GRU or MiniLM
+            if self.lang_model == 'minilm':
+                # MiniLM: use pre-computed embeddings from preprocessor
+                instr_embedding = self._get_instr_embedding(None, minilm_embeddings=obs.minilm_emb)
+            else:
+                # GRU-based: use tokenized instructions
+                instr_embedding = self._get_instr_embedding(obs.instr)
         if self.use_instr and self.lang_model == "attgru":
             # outputs: B x L x D
             # memory: B x M
@@ -272,7 +325,24 @@ class ACModel(nn.Module, RecurrentACModel):
 
         return {'dist': dist, 'value': value, 'memory': memory, 'extra_predictions': extra_predictions}
 
-    def _get_instr_embedding(self, instr):
+    def _get_instr_embedding(self, instr, minilm_embeddings=None):
+        """Get instruction embedding from tokenized instr or pre-computed MiniLM embeddings.
+
+        Args:
+            instr: Tokenized instructions tensor (for GRU/BiGRU/AttGRU)
+            minilm_embeddings: Pre-computed MiniLM embeddings tensor (for MiniLM)
+                              Shape: (batch_size, 384)
+
+        Returns:
+            Instruction embeddings (batch_size, instr_dim)
+        """
+        if self.lang_model == 'minilm':
+            if minilm_embeddings is None:
+                raise ValueError("MiniLM requires pre-computed embeddings from preprocessor")
+            # Project pre-computed MiniLM embeddings (gradients flow here!)
+            embeddings = self.minilm_projection(minilm_embeddings)
+            return embeddings
+
         lengths = (instr != 0).sum(1).long()
         if self.lang_model == 'gru':
             out, _ = self.instr_rnn(self.word_embedding(instr))
