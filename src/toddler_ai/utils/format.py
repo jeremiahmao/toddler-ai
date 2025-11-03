@@ -8,6 +8,15 @@ from toddler_ai.utils.dictlist import DictList
 from .. import utils
 
 
+def default_preprocess_obss(obss, device=None):
+    """Default observation preprocessing function.
+
+    Simply returns observations as-is without modification.
+    Used as fallback when no custom preprocessor is provided.
+    """
+    return obss
+
+
 def get_vocab_path(model_name):
     return os.path.join(utils.get_model_dir(model_name), "vocab.json")
 

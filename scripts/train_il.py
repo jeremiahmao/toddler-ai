@@ -50,7 +50,7 @@ def main(args):
 
     il_learn = ImitationLearning(args)
 
-    # Define logger and Tensorboard writer
+    # Define logger and wandb
     header = (["update", "frames", "FPS", "duration", "entropy", "policy_loss", "train_accuracy"]
               + ["validation_accuracy"])
     if args.multi_env is None:
@@ -58,10 +58,19 @@ def main(args):
     else:
         header.extend(["validation_return_{}".format(env) for env in args.multi_env])
         header.extend(["validation_success_rate_{}".format(env) for env in args.multi_env])
-    writer = None
+
+    # Initialize wandb if requested
     if args.tb:
-        from tensorboardX import SummaryWriter
-        writer = SummaryWriter(utils.get_log_dir(args.model))
+        try:
+            import wandb
+            wandb.init(
+                project="toddler-ai",
+                name=args.model,
+                config=vars(args)
+            )
+        except ImportError:
+            logger.warning("wandb not installed. Install with: uv sync --extra tracking")
+            args.tb = False
 
     # Define csv writer
     csv_writer = None
@@ -81,7 +90,7 @@ def main(args):
     logger.info("CUDA available: {}".format(torch.cuda.is_available()))
     logger.info(il_learn.acmodel)
 
-    il_learn.train(il_learn.train_demos, writer, csv_writer, status_path, header)
+    il_learn.train(il_learn.train_demos, csv_writer, status_path, header)
 
 
 if __name__ == "__main__":
