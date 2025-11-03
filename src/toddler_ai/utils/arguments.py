@@ -67,12 +67,12 @@ class ArgumentParser(argparse.ArgumentParser):
                             help="dimensionality of the memory LSTM")
         self.add_argument("--no-instr", action="store_true", default=False,
                             help="don't use instructions in the model")
-        self.add_argument("--instr-arch", default="gru",
-                            help="arch to encode instructions, possible values: gru, bigru, conv, bow (default: gru)")
+        self.add_argument("--instr-arch", default="minilm",
+                            help="arch to encode instructions, possible values: minilm (default), gru, bigru, conv, bow (LEGACY)")
         self.add_argument("--no-mem", action="store_true", default=False,
                             help="don't use memory in the model")
-        self.add_argument("--arch", default='bow_endpool_res',
-                            help="image embedding architecture")
+        self.add_argument("--arch", default='vit',
+                            help="image embedding architecture: vit (default, modern), bow_endpool_res/film_endpool_res (LEGACY)")
 
         # Validation parameters
         self.add_argument("--val-seed", type=int, default=int(1e9),

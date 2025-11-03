@@ -35,16 +35,32 @@ class ModelAgent(Agent):
     """A model-based agent. This agent behaves using a model."""
 
     def __init__(self, model_or_name, obss_preprocessor, argmax):
-        if obss_preprocessor is None:
-            assert isinstance(model_or_name, str)
-            obss_preprocessor = utils.ObssPreprocessor(model_or_name)
-        self.obss_preprocessor = obss_preprocessor
+        # Load model first if it's a string
         if isinstance(model_or_name, str):
             self.model = utils.load_model(model_or_name)
-            # Model is already on correct device from load_model
+            model_name = model_or_name
         else:
             self.model = model_or_name
+            model_name = None
+
+        # Detect if we need MiniLM preprocessor (for ViT models)
+        if obss_preprocessor is None:
+            assert model_name is not None, "Need model name to create preprocessor"
+            # Check if model uses MiniLM (has minilm_projection attribute)
+            if hasattr(self.model, 'minilm_projection'):
+                # ViT model - use MiniLM preprocessor
+                obss_preprocessor = utils.MiniLMObssPreprocessor(model_name, None)
+            else:
+                # Legacy FiLM model - use regular preprocessor
+                obss_preprocessor = utils.ObssPreprocessor(model_name)
+
+        self.obss_preprocessor = obss_preprocessor
         self.device = next(self.model.parameters()).device
+
+        # Move MiniLM encoder to same device as model
+        if hasattr(self.obss_preprocessor, 'minilm_encoder') and self.obss_preprocessor.minilm_encoder is not None:
+            self.obss_preprocessor.minilm_encoder.to(self.device)
+
         self.argmax = argmax
         self.memory = None
 
