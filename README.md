@@ -63,10 +63,8 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/jeremiahmao/toddler-ai.git
 cd toddler-ai
 
-# Create virtual environment and install dependencies
-uv venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-uv pip install -e ".[dev,training]"
+# Install all dependencies (creates venv automatically)
+uv sync
 ```
 
 ### Using pip
@@ -74,7 +72,7 @@ uv pip install -e ".[dev,training]"
 ```bash
 git clone https://github.com/jeremiahmao/toddler-ai.git
 cd toddler-ai
-pip install -e ".[dev,training]"
+pip install -e .
 ```
 
 ## Quick Start
@@ -82,7 +80,7 @@ pip install -e ".[dev,training]"
 ### 1. Generate Demonstrations (using the bot)
 
 ```bash
-python scripts/make_demos.py --env BabyAI-GoToLocal-v0 --episodes 1000 --demos demos/goto_local
+uv run python scripts/make_demos.py --env BabyAI-GoToLocal-v0 --episodes 10 --valid-episodes 5 --demos demos/goto_local
 ```
 
 The bot is a rule-based expert that can solve all BabyAI tasks perfectly, allowing you to generate training data without human demonstrations.
@@ -90,12 +88,16 @@ The bot is a rule-based expert that can solve all BabyAI tasks perfectly, allowi
 ### 2. Train with Imitation Learning
 
 ```bash
+# Quick test run (10 demos, 50 epochs)
+uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
+    --model test_model --batch-size 10 --epochs 50 --val-interval 10
+
 # Small levels (GoToRedBall, GoToLocal, PickupLoc, PutNextLocal)
-python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos goto_local \
+uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos goto_local \
     --batch-size 256 --val-episodes 512 --epoch-length 25600
 
 # Larger levels (most other environments)
-python scripts/train_il.py --env BabyAI-GoToDoor-v0 --demos goto_door \
+uv run python scripts/train_il.py --env BabyAI-GoToDoor-v0 --demos goto_door \
     --memory-dim 2048 --recurrence 80 --batch-size 128 \
     --instr-arch attgru --instr-dim 256 --epoch-length 51200 --lr 5e-5
 ```
@@ -103,7 +105,7 @@ python scripts/train_il.py --env BabyAI-GoToDoor-v0 --demos goto_door \
 ### 3. Train with Reinforcement Learning (PPO)
 
 ```bash
-python scripts/train_rl.py --env BabyAI-GoToLocal-v0
+uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0
 ```
 
 Training typically takes several hours. Models and logs are saved to `models/` and `logs/` directories.
@@ -111,15 +113,15 @@ Training typically takes several hours. Models and logs are saved to `models/` a
 ### 4. Evaluate Agent Performance
 
 ```bash
-python scripts/evaluate.py --env BabyAI-GoToLocal-v0 --model <MODEL_NAME>
+uv run python scripts/evaluate.py --env BabyAI-GoToLocal-v0 --model test_model --episodes 10 --argmax
 ```
 
-Evaluates on 1000 episodes and reports success rate.
+Evaluates on specified number of episodes and reports success rate.
 
 ### 5. Visualize Agent Behavior
 
 ```bash
-python scripts/enjoy.py --env BabyAI-GoToLocal-v0 --model <MODEL_NAME>
+uv run python scripts/enjoy.py --env BabyAI-GoToLocal-v0 --model test_model
 ```
 
 Watch your trained agent solve tasks in real-time with rendering.
@@ -169,17 +171,17 @@ toddler-ai/
 ### Setup Development Environment
 
 ```bash
-# Install all dependencies including dev tools
-uv pip install -e ".[dev,training]"
+# Install all dependencies (uv sync installs everything from pyproject.toml)
+uv sync
 
 # Install pre-commit hooks (auto-formats on commit)
-pre-commit install
+uv run pre-commit install
 ```
 
 ### Run Tests
 
 ```bash
-pytest tests/
+uv run pytest tests/
 ```
 
 ### Code Quality
@@ -192,9 +194,9 @@ This project uses pre-commit hooks to maintain code quality:
 
 ```bash
 # Run manually
-black src/ scripts/ tests/
-isort src/ scripts/ tests/
-flake8 src/ scripts/ tests/
+uv run black src/ scripts/ tests/
+uv run isort src/ scripts/ tests/
+uv run flake8 src/ scripts/ tests/
 
 # Or just commit and hooks run automatically
 git commit -m "your message"
