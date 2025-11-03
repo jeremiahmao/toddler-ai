@@ -26,7 +26,7 @@ class ArgumentParser(argparse.ArgumentParser):
         self.add_argument("--procs", type=int, default=64,
                             help="number of processes (default: 64)")
         self.add_argument("--tb", action="store_true", default=False,
-                            help="log into Tensorboard")
+                            help="log training metrics to Weights & Biases (wandb)")
 
         # Training arguments
         self.add_argument("--log-interval", type=int, default=10,

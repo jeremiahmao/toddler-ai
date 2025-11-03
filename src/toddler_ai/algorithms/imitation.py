@@ -347,7 +347,7 @@ class ImitationLearning(object):
         mean_return = {tid: np.mean(log["return_per_episode"]) for tid, log in enumerate(logs)}
         return mean_return
 
-    def train(self, train_demos, writer, csv_writer, status_path, header, reset_status=False):
+    def train(self, train_demos, csv_writer, status_path, header, reset_status=False):
         # Load the status
         def initial_status():
             return {'i': 0,
@@ -424,8 +424,9 @@ class ImitationLearning(object):
                     validation_data = [''] * len([key for key in header if 'valid' in key])
                     assert len(header) == len(train_data + validation_data)
                     if self.args.tb:
-                        for key, value in zip(header, train_data):
-                            writer.add_scalar(key, float(value), status['num_frames'])
+                        import wandb
+                        wandb.log({key: float(value) for key, value in zip(header, train_data)},
+                                 step=status['num_frames'])
                     csv_writer.writerow(train_data + validation_data)
 
             if status['i'] % self.args.val_interval == 0:
@@ -446,8 +447,9 @@ class ImitationLearning(object):
 
                     assert len(header) == len(train_data + validation_data)
                     if self.args.tb:
-                        for key, value in zip(header, train_data + validation_data):
-                            writer.add_scalar(key, float(value), status['num_frames'])
+                        import wandb
+                        wandb.log({key: float(value) for key, value in zip(header, train_data + validation_data)},
+                                 step=status['num_frames'])
                     csv_writer.writerow(train_data + validation_data)
 
                 # In case of a multi-env, the update condition would be "better mean success rate" !

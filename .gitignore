@@ -44,11 +44,13 @@ ehthumbs.db
 Thumbs.db
 
 # Project specific
-models/
-logs/
-demos/
-trained_models/
-storage/
+# Note: /models/ means only the root models/ directory (for saved checkpoints)
+# src/toddler_ai/models/ contains source code and should NOT be ignored
+/models/
+/logs/
+/demos/
+/trained_models/
+/storage/
 *.pt
 *.pth
 *.ckpt

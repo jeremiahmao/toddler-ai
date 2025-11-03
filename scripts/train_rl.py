@@ -17,10 +17,10 @@ import subprocess
 
 import toddler_ai
 import toddler_ai.utils as utils
-import toddler_ai.rl
-from toddler_ai.arguments import ArgumentParser
-from toddler_ai.model import ACModel
-from toddler_ai.evaluate import batch_evaluate
+from toddler_ai.algorithms import PPOAlgo
+from toddler_ai.utils.arguments import ArgumentParser
+from toddler_ai.models.ac_model import ACModel
+from toddler_ai.utils.evaluate import batch_evaluate
 from toddler_ai.utils.agent import ModelAgent
 from minigrid.wrappers import RGBImgPartialObsWrapper
 
@@ -107,11 +107,11 @@ if torch.cuda.is_available():
 
 reshape_reward = lambda _0, _1, reward, _2: args.reward_scale * reward
 if args.algo == "ppo":
-    algo = babyai.rl.PPOAlgo(envs, acmodel, args.frames_per_proc, args.discount, args.lr, args.beta1, args.beta2,
-                             args.gae_lambda,
-                             args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
-                             args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size, obss_preprocessor,
-                             reshape_reward)
+    algo = PPOAlgo(envs, acmodel, args.frames_per_proc, args.discount, args.lr, args.beta1, args.beta2,
+                   args.gae_lambda,
+                   args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
+                   args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size, obss_preprocessor,
+                   reshape_reward)
 else:
     raise ValueError("Incorrect algorithm name: {}".format(args.algo))
 
@@ -132,17 +132,26 @@ else:
               'num_episodes': 0,
               'num_frames': 0}
 
-# Define logger and Tensorboard writer and CSV writer
+# Define logger and wandb and CSV writer
 
 header = (["update", "episodes", "frames", "FPS", "duration"]
           + ["return_" + stat for stat in ['mean', 'std', 'min', 'max']]
           + ["success_rate"]
           + ["num_frames_" + stat for stat in ['mean', 'std', 'min', 'max']]
           + ["entropy", "value", "policy_loss", "value_loss", "loss", "grad_norm"])
-if args.tb:
-    from tensorboardX import SummaryWriter
 
-    writer = SummaryWriter(utils.get_log_dir(args.model))
+# Initialize wandb if requested
+if args.tb:
+    try:
+        import wandb
+        wandb.init(
+            project="toddler-ai",
+            name=args.model,
+            config=vars(args)
+        )
+    except ImportError:
+        logger.warning("wandb not installed. Install with: uv sync --extra tracking")
+        args.tb = False
 csv_path = os.path.join(utils.get_log_dir(args.model), 'log.csv')
 first_created = not os.path.exists(csv_path)
 # we don't buffer data going in the csv log, cause we assume
@@ -153,17 +162,17 @@ if first_created:
 
 # Log code state, command, availability of CUDA and model
 
-babyai_code = list(babyai.__path__)[0]
+toddler_ai_code = list(toddler_ai.__path__)[0]
 try:
     last_commit = subprocess.check_output(
-        'cd {}; git log -n1'.format(babyai_code), shell=True).decode('utf-8')
+        'cd {}; git log -n1'.format(toddler_ai_code), shell=True).decode('utf-8')
     logger.info('LAST COMMIT INFO:')
     logger.info(last_commit)
 except subprocess.CalledProcessError:
     logger.info('Could not figure out the last commit')
 try:
     diff = subprocess.check_output(
-        'cd {}; git diff'.format(babyai_code), shell=True).decode('utf-8')
+        'cd {}; git diff'.format(toddler_ai_code), shell=True).decode('utf-8')
     if diff:
         logger.info('GIT DIFF:')
         logger.info(diff)
@@ -216,9 +225,10 @@ while status['num_frames'] < args.frames:
 
         logger.info(format_str.format(*data))
         if args.tb:
+            import wandb
             assert len(header) == len(data)
-            for key, value in zip(header, data):
-                writer.add_scalar(key, float(value), status['num_frames'])
+            wandb.log({key: float(value) for key, value in zip(header, data)},
+                     step=status['num_frames'])
 
         csv_writer.writerow(data)
 

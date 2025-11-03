@@ -22,8 +22,8 @@ This repository contains a curated, organized selection of production-ready code
 
 ### Models & Algorithms (from BabyAI)
 - ✅ **FiLM-based Actor-Critic** - Language-conditioned vision model with GRU memory
-- ✅ **PPO Algorithm** - Proximal Policy Optimization for RL training
-- ✅ **Imitation Learning** - Complete IL training loop with demo support
+- ✅ **PPO Algorithm** - Primary RL training method using Proximal Policy Optimization ([Schulman et al., 2017](https://arxiv.org/abs/1707.06347))
+- ✅ **Imitation Learning** - Behavioral cloning for training from demonstrations
 - ✅ **Rule-based Bot** - Expert agent for generating demonstrations
 
 ### Training & Evaluation
@@ -63,8 +63,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/jeremiahmao/toddler-ai.git
 cd toddler-ai
 
-# Install all dependencies (creates venv automatically)
+# Install core dependencies (creates venv automatically)
 uv sync
+
+# Optional: Install wandb for experiment tracking
+uv sync --extra tracking
 ```
 
 ### Using pip
@@ -73,6 +76,9 @@ uv sync
 git clone https://github.com/jeremiahmao/toddler-ai.git
 cd toddler-ai
 pip install -e .
+
+# Optional: Install wandb for experiment tracking
+pip install -e ".[tracking]"
 ```
 
 ## Quick Start
@@ -92,6 +98,10 @@ The bot is a rule-based expert that can solve all BabyAI tasks perfectly, allowi
 uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
     --model test_model --batch-size 10 --epochs 50 --val-interval 10
 
+# With Weights & Biases tracking (requires: uv sync --extra tracking)
+uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
+    --model test_model --batch-size 10 --epochs 50 --val-interval 10 --tb
+
 # Small levels (GoToRedBall, GoToLocal, PickupLoc, PutNextLocal)
 uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos goto_local \
     --batch-size 256 --val-episodes 512 --epoch-length 25600
@@ -104,11 +114,51 @@ uv run python scripts/train_il.py --env BabyAI-GoToDoor-v0 --demos goto_door \
 
 ### 3. Train with Reinforcement Learning (PPO)
 
+**PPO (Proximal Policy Optimization)** is the primary RL algorithm in Toddler AI. It uses clipped surrogate objectives and value function clipping for stable, efficient policy learning.
+
 ```bash
+# Basic PPO training
 uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0
+
+# PPO with custom hyperparameters
+uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
+    --frames 1000000 --lr 1e-4 --clip-eps 0.2 --ppo-epochs 4 \
+    --batch-size 256 --frames-per-proc 128 --discount 0.99 --gae-lambda 0.99
+
+# PPO with pretrained model from imitation learning
+uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
+    --pretrained-model models/your_il_model
 ```
 
+**Key PPO hyperparameters:**
+- `--clip-eps`: PPO clipping parameter (default: 0.2)
+- `--ppo-epochs`: Number of PPO update epochs per batch (default: 4)
+- `--batch-size`: Batch size for PPO updates (default: 256)
+- `--gae-lambda`: GAE lambda for advantage estimation (default: 0.99)
+- `--discount`: Reward discount factor (default: 0.99)
+
 Training typically takes several hours. Models and logs are saved to `models/` and `logs/` directories.
+
+**Experiment Tracking with Weights & Biases:**
+
+Add the `--tb` flag to any training command to log metrics to [wandb.ai](https://wandb.ai):
+- Beautiful interactive dashboards
+- Compare multiple runs
+- Track hyperparameters automatically
+- Free for personal/academic use
+
+First time setup:
+```bash
+uv sync --extra tracking  # Install wandb
+uv run wandb login        # Login with your wandb account
+```
+
+Then train with tracking:
+```bash
+uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local --model my_model --tb
+```
+
+View your experiments at: https://wandb.ai
 
 ### 4. Evaluate Agent Performance
 
@@ -142,9 +192,9 @@ toddler-ai/
 │   │   ├── rl_base.py           # Base RL model interface
 │   │   └── format.py            # Model formatting utilities
 │   ├── algorithms/              # Training algorithms
-│   │   ├── imitation.py         # Imitation learning loop
-│   │   ├── ppo.py               # PPO implementation
-│   │   └── base.py              # Base RL algorithm
+│   │   ├── ppo.py               # PPO (Proximal Policy Optimization) - Primary RL method
+│   │   ├── imitation.py         # Imitation learning from demonstrations
+│   │   └── base.py              # Base RL algorithm interface
 │   ├── agents/                  # Agent implementations
 │   │   └── bot.py               # Rule-based expert bot
 │   └── utils/                   # Utilities (12 modules)
@@ -207,7 +257,7 @@ git commit -m "your message"
 - **46 Python modules** in `src/toddler_ai/`
 - **6 training/evaluation scripts** ready to use
 - **7 BabyAI environment types** (goto, open, pickup, putnext, synth, unlock, other)
-- **3 core algorithms** (Imitation Learning, PPO, Base RL)
+- **2 training algorithms** (PPO for RL, Imitation Learning for behavioral cloning)
 - **1 expert bot** for generating perfect demonstrations
 - **100% modern Python** (3.10+, type hints, from `__future__` imports)
 
