@@ -35,8 +35,19 @@ def seed(seed_value):
         torch.cuda.manual_seed_all(seed_value)
 
 
+def get_device():
+    """Get the best available device (CUDA > MPS > CPU)."""
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
+
+
 __all__ = [
     "seed",
+    "get_device",
     "load_agent",
     "Agent",
     "ModelAgent",

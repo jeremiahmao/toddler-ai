@@ -85,9 +85,9 @@ def main(args):
     # Get the status path
     status_path = os.path.join(utils.get_log_dir(args.model), 'status.json')
 
-    # Log command, availability of CUDA, and model
+    # Log command, device info, and model
     logger.info(args)
-    logger.info("CUDA available: {}".format(torch.cuda.is_available()))
+    logger.info("Device: {}".format(il_learn.device))
     logger.info(il_learn.acmodel)
 
     il_learn.train(il_learn.train_demos, csv_writer, status_path, header)

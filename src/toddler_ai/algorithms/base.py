@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 import torch
 import numpy
 
+import toddler_ai.utils as utils
 from toddler_ai.utils.format import default_preprocess_obss
 from toddler_ai.utils.dictlist import DictList
 from toddler_ai.utils.penv import ParallelEnv
@@ -12,7 +13,7 @@ class BaseAlgo(ABC):
     """The base class for RL algorithms."""
 
     def __init__(self, envs, acmodel, num_frames_per_proc, discount, lr, gae_lambda, entropy_coef,
-                 value_loss_coef, max_grad_norm, recurrence, preprocess_obss, reshape_reward, aux_info):
+                 value_loss_coef, max_grad_norm, recurrence, preprocess_obss, reshape_reward, aux_info, env_seeds=None):
         """
         Initializes a `BaseAlgo` instance.
 
@@ -52,7 +53,7 @@ class BaseAlgo(ABC):
         """
         # Store parameters
 
-        self.env = ParallelEnv(envs)
+        self.env = ParallelEnv(envs, seeds=env_seeds)
         self.acmodel = acmodel
         self.acmodel.train()
         self.num_frames_per_proc = num_frames_per_proc
@@ -69,7 +70,19 @@ class BaseAlgo(ABC):
 
         # Store helpers values
 
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Note: MPS has compatibility issues with some operations in RL training
+        # (view/reshape in backward pass). Using CPU/CUDA for now.
+        # MPS will be more beneficial when we add MiniLM encoder anyway.
+        device = utils.get_device()
+        if device.type == 'mps':
+            import logging
+            logging.getLogger(__name__).info(
+                "MPS device detected but using CPU for RL training due to PyTorch MPS limitations. "
+                "This will be addressed in future updates.")
+            self.device = torch.device('cpu')
+        else:
+            self.device = device
+
         self.num_procs = len(envs)
         self.num_frames = self.num_frames_per_proc * self.num_procs
 
