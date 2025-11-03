@@ -52,11 +52,13 @@ utils.seed(args.seed)
 # Generate environments
 envs = []
 use_pixel = 'pixel' in args.arch
+env_seeds = []
 for i in range(args.procs):
     env = gym.make(args.env)
     if use_pixel:
         env = RGBImgPartialObsWrapper(env)
-    env.seed(100 * args.seed + i)
+    # Store seed to use during reset (gymnasium API)
+    env_seeds.append(100 * args.seed + i)
     envs.append(env)
 
 # Define model name
@@ -100,10 +102,8 @@ if acmodel is None:
 obss_preprocessor.vocab.save()
 utils.save_model(acmodel, args.model)
 
-if torch.cuda.is_available():
-    acmodel.cuda()
-
 # Define actor-critic algo
+# Note: Algorithm decides device (may use CPU instead of MPS due to PyTorch limitations)
 
 reshape_reward = lambda _0, _1, reward, _2: args.reward_scale * reward
 if args.algo == "ppo":
@@ -111,9 +111,12 @@ if args.algo == "ppo":
                    args.gae_lambda,
                    args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
                    args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size, obss_preprocessor,
-                   reshape_reward)
+                   reshape_reward, env_seeds=env_seeds)
 else:
     raise ValueError("Incorrect algorithm name: {}".format(args.algo))
+
+# Move model to the device chosen by the algorithm
+acmodel.to(algo.device)
 
 # When using extra binary information, more tensors (model params) are initialized compared to when we don't use that.
 # Thus, there starts to be a difference in the random state. If we want to avoid it, in order to make sure that
@@ -180,7 +183,7 @@ except subprocess.CalledProcessError:
     logger.info('Could not figure out the last commit')
 logger.info('COMMAND LINE ARGS:')
 logger.info(args)
-logger.info("CUDA available: {}".format(torch.cuda.is_available()))
+logger.info("Device: {}".format(algo.device))
 logger.info(acmodel)
 
 # Train model

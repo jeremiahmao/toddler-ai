@@ -150,13 +150,23 @@ class ImitationLearning(object):
         utils.save_model(self.acmodel, args.model)
 
         self.acmodel.train()
-        if torch.cuda.is_available():
-            self.acmodel.cuda()
+
+        # Auto-detect best available device (CUDA > MPS > CPU)
+        # Note: MPS has compatibility issues with view/reshape operations
+        # Using CPU/CUDA for now until PyTorch MPS matures
+        device = utils.get_device()
+        if device.type == 'mps':
+            import logging
+            logging.getLogger(__name__).info(
+                "MPS device detected but using CPU for training due to PyTorch MPS limitations. "
+                "This will be addressed in future updates.")
+            self.device = torch.device('cpu')
+        else:
+            self.device = device
+        self.acmodel.to(self.device)
 
         self.optimizer = torch.optim.Adam(self.acmodel.parameters(), self.args.lr, eps=self.args.optim_eps)
         self.scheduler = torch.optim.lr_scheduler.StepLR(self.optimizer, step_size=100, gamma=0.9)
-
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     @staticmethod
     def default_model_name(args):
@@ -330,6 +340,8 @@ class ImitationLearning(object):
 
         # Setting the agent model to the current model
         agent.model = self.acmodel
+        agent.device = self.device  # Update agent's device to match current training device
+        agent.memory = agent.memory.to(self.device) if agent.memory is not None else None
 
         agent.model.eval()
         logs = []
@@ -465,19 +477,16 @@ class ImitationLearning(object):
                         self.acmodel.cpu()
                     utils.save_model(self.acmodel, self.args.model + "_best")
                     self.obss_preprocessor.vocab.save(utils.get_vocab_path(self.args.model + "_best"))
-                    if torch.cuda.is_available():
-                        self.acmodel.cuda()
+                    self.acmodel.to(self.device)
                 else:
                     status['patience'] += 1
                     logger.info(
                         "Losing patience, new value={}, limit={}".format(status['patience'], self.args.patience))
 
-                if torch.cuda.is_available():
-                    self.acmodel.cpu()
+                self.acmodel.cpu()
                 utils.save_model(self.acmodel, self.args.model)
                 self.obss_preprocessor.vocab.save()
-                if torch.cuda.is_available():
-                    self.acmodel.cuda()
+                self.acmodel.to(self.device)
                 with open(status_path, 'w') as dst:
                     json.dump(status, dst)
 
