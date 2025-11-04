@@ -110,6 +110,41 @@ class PPOAlgo(BaseAlgo):
 
                     loss = policy_loss - self.entropy_coef * entropy + self.value_loss_coef * value_loss
 
+                    # Auxiliary prediction losses (if model supports predictive processing)
+                    if 'vision_pred' in extra_predictions and extra_predictions['vision_pred'] is not None:
+                        # Vision prediction loss: predict next observation patches
+                        # We need next observation - get it from next timestep in batch
+                        # For last timestep in recurrence, we don't have next obs in this sub-batch
+                        if i < self.recurrence - 1:
+                            sb_next = exps[inds + i + 1]
+                            # Compute target vision patches from next observation
+                            with torch.no_grad():
+                                # Run next observation through model to get target patches
+                                next_model_results = self.acmodel(sb_next.obs, memory * sb_next.mask)
+                                vision_target = next_model_results['extra_predictions']['current_vision']
+
+                            vision_pred = extra_predictions['vision_pred']
+                            vision_pred_loss = F.mse_loss(vision_pred, vision_target)
+
+                            # Get vision prediction coefficient from model
+                            vision_coef = getattr(self.acmodel, 'vision_pred_coef', 0.1)
+                            loss = loss + vision_coef * vision_pred_loss
+
+                        # Progress prediction loss: based on reward signal
+                        if 'progress_pred' in extra_predictions:
+                            # Map reward to progress: positive reward = progress toward goal
+                            # For sparse binary rewards: 1.0 if reward > 0, -0.1 otherwise
+                            progress_target = torch.where(
+                                sb.reward > 0,
+                                torch.ones_like(sb.reward),
+                                -0.1 * torch.ones_like(sb.reward)
+                            )
+                            progress_pred = extra_predictions['progress_pred']
+                            progress_pred_loss = F.mse_loss(progress_pred, progress_target)
+
+                            progress_coef = getattr(self.acmodel, 'progress_pred_coef', 0.1)
+                            loss = loss + progress_coef * progress_pred_loss
+
                     # Update batch values
 
                     batch_entropy += entropy.item()

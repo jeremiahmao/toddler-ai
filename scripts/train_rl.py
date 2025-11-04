@@ -119,6 +119,27 @@ if __name__ == '__main__':
                     cross_attn_heads=getattr(args, 'cross_attn_heads', 1),
                     dropout=getattr(args, 'dropout', 0.1)
                 )
+            elif args.arch == 'unified_vit':
+                from toddler_ai.models.unified_vit_model import UnifiedViTACModel
+                logger.info('Using Unified Concept Space ViT with Predictive Processing')
+                logger.info('  - All modalities in 256-dim concept space')
+                logger.info('  - Reusable action embeddings')
+                logger.info('  - Working memory with temporal positions')
+                logger.info('  - Vision + progress prediction')
+                acmodel = UnifiedViTACModel(
+                    obs_space=obss_preprocessor.obs_space,
+                    action_space=envs[0].action_space,
+                    image_size=7,  # BabyAI grid size
+                    patch_size=1,  # Each cell is a patch
+                    embed_dim=256,  # Fixed unified concept space
+                    use_memory=not args.no_mem,
+                    attn_depth=getattr(args, 'attn_depth', 2),
+                    attn_heads=getattr(args, 'attn_heads', 4),
+                    dropout=getattr(args, 'dropout', 0.1),
+                    history_length=getattr(args, 'history_length', 10),
+                    vision_pred_coef=getattr(args, 'vision_pred_coef', 0.1),
+                    progress_pred_coef=getattr(args, 'progress_pred_coef', 0.1)
+                )
             else:
                 logger.warning('⚠️  Using LEGACY FiLM-based CNN architecture. This is deprecated.')
                 logger.warning('⚠️  Consider using --arch vit --instr-arch minilm for modern architecture.')

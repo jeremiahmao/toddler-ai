@@ -21,7 +21,8 @@ This repository contains a curated, organized selection of production-ready code
 - ✅ Level generation and verification utilities
 
 ### Models & Algorithms
-- ✅ **Vision Transformer (ViT)** - Modern attention-based architecture for vision-language grounding (REQUIRED)
+- ✅ **Unified Concept Space ViT** - Cognitive architecture with predictive processing (256-dim unified space) (RECOMMENDED)
+- ✅ **Vision Transformer (ViT)** - Modern attention-based architecture for vision-language grounding
 - ✅ **MiniLM Integration** - Pretrained language encoder (384-dim) with differential learning rates (REQUIRED)
 - ✅ **PPO Algorithm** - Proximal Policy Optimization ([Schulman et al., 2017](https://arxiv.org/abs/1707.06347)) with advantage normalization and optimized defaults for sparse rewards
 - ✅ **Imitation Learning** - Behavioral cloning for training from demonstrations (from BabyAI)
@@ -86,7 +87,11 @@ pip install -e ".[tracking]"
 
 ## Quick Start
 
-**Toddler AI now exclusively uses the ViT + MiniLM architecture.** All training requires Vision Transformer for vision and pretrained MiniLM for language understanding. Legacy GRU/FiLM architectures have been removed.
+**Toddler AI uses modern attention-based architectures with MiniLM language encoding:**
+- **unified_vit** (RECOMMENDED): Unified concept space with predictive processing
+- **vit**: Standard Vision Transformer with cross-attention
+
+Legacy GRU/FiLM architectures have been removed.
 
 ### 1. Generate Demonstrations (using the bot)
 
@@ -98,46 +103,55 @@ The bot is a rule-based expert that can solve all BabyAI tasks perfectly, allowi
 
 ### 2. Train with Imitation Learning
 
-**ViT + MiniLM is the only supported architecture** - specify `--arch vit --instr-arch minilm`:
+**Choose your architecture:**
 
 ```bash
-# Quick test run
+# Unified Concept Space ViT (RECOMMENDED) - with predictive processing
+uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
+    --arch unified_vit --instr-arch minilm --model test_model \
+    --batch-size 10 --epochs 50 --val-interval 10
+
+# Standard ViT - cross-attention based
 uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
     --arch vit --instr-arch minilm --model test_model \
     --batch-size 10 --epochs 50 --val-interval 10
 
 # With Weights & Biases tracking
 uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
-    --arch vit --instr-arch minilm --model test_model --tb
+    --arch unified_vit --instr-arch minilm --model test_model --tb
 
 # Small levels (GoToRedBall, GoToLocal, PickupLoc, PutNextLocal)
 uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos goto_local \
-    --arch vit --instr-arch minilm --batch-size 256 --val-episodes 512
+    --arch unified_vit --instr-arch minilm --batch-size 256 --val-episodes 512
 
 # Larger levels
 uv run python scripts/train_il.py --env BabyAI-GoToDoor-v0 --demos goto_door \
-    --arch vit --instr-arch minilm \
+    --arch unified_vit --instr-arch minilm \
     --memory-dim 2048 --recurrence 80 --batch-size 128 --epoch-length 51200
 ```
 
 ### 3. Train with Reinforcement Learning (PPO)
 
-**PPO (Proximal Policy Optimization)** is the primary RL algorithm in Toddler AI. It uses clipped surrogate objectives and value function clipping for stable, efficient policy learning. **Only ViT + MiniLM is supported.**
+**PPO (Proximal Policy Optimization)** is the primary RL algorithm in Toddler AI. It uses clipped surrogate objectives and value function clipping for stable, efficient policy learning.
 
 ```bash
-# Basic PPO training
+# Unified Concept Space ViT (RECOMMENDED) - with predictive processing
+uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
+    --arch unified_vit --instr-arch minilm
+
+# Standard ViT
 uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
     --arch vit --instr-arch minilm
 
 # PPO with custom hyperparameters
 uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch vit --instr-arch minilm \
+    --arch unified_vit --instr-arch minilm \
     --frames 1000000 --lr 1e-4 --clip-eps 0.2 --ppo-epochs 4 \
     --batch-size 256 --frames-per-proc 128 --discount 0.99 --gae-lambda 0.99
 
 # PPO with pretrained model from imitation learning
 uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch vit --instr-arch minilm \
+    --arch unified_vit --instr-arch minilm \
     --pretrained-model models/your_il_model
 ```
 
@@ -216,9 +230,56 @@ Watch your trained agent solve tasks in real-time with rendering.
 
 ## Model Architecture
 
-### Vision Transformer (ViT) + MiniLM
+Toddler AI provides two attention-based architectures:
 
-**The only supported architecture:**
+### Unified Concept Space ViT (RECOMMENDED)
+
+**Cognitive architecture with predictive processing (8.4M params):**
+
+```
+Goal (MiniLM) → [256] ─┐
+Actions (history) → [10, 256] ─┼─→ Unified Buffer [~60, 256] → Self-Attention → Pool → [256]
+Vision (patches) → [49, 256] ─┘                                                           ↓
+                                                                          ┌─────────────────┴─────────────────┐
+                                                                          ↓                                     ↓
+                                                                    Action Logits                         Predictions
+                                                               (state @ actions.T)                    (vision + progress)
+```
+
+**Key Features:**
+1. **Unified 256-dim concept space** - All modalities (vision, language, action) share same embedding dimension
+2. **Reusable action embeddings** - Same [7, 256] matrix encodes history AND selects next action
+3. **Working memory** - Last 10 actions with temporal position encodings
+4. **Predictive processing** - Model predicts next observation patches and goal progress
+5. **Self-attention over everything** - Goal, action history, and vision patches all attend to each other
+
+**Architecture Flow:**
+1. **MiniLM Projection (98K)**: 384-dim → 256-dim concept space
+2. **Patch Embedding (768)**: 7×7 image → 49 tokens (256-dim each)
+3. **Action Embeddings (1.8K)**: 7 actions × 256-dim (reused for history + selection)
+4. **Unified Self-Attention (2.6M)**: 2 layers, 4 heads over concatenated [goal, actions, vision]
+5. **Pool (65K)**: Mean pool → single 256-dim state concept
+6. **Actor**: state_concept @ action_embeddings.T → action logits
+7. **Critic (33K)**: state_concept → value
+8. **Vision Predictor (3.2M)**: state_concept → next observation patches [49, 256]
+9. **Progress Predictor (16K)**: state_concept → goal progress [-1, 1]
+
+**Why Unified Concept Space?**
+- **Semantic actions**: Actions are concepts with meaning, not just indices
+- **Dense learning signal**: Prediction errors provide feedback every timestep, not just sparse rewards
+- **Natural memory**: Temporal position encodings create smooth memory decay
+- **Efficient**: Single attention mechanism over all modalities
+
+**Predictive Processing:**
+The model learns environment dynamics by predicting:
+- **Next vision**: What will I see after taking this action? (MSE loss vs. actual next patches)
+- **Goal progress**: Am I getting closer to the goal? (MSE loss vs. reward signal)
+
+Learning from prediction errors (surprise) teaches the model how the world works, providing a dense training signal even in sparse reward environments.
+
+### Standard Vision Transformer (ViT) + MiniLM
+
+**Cross-attention based architecture:**
 ```
 Image → Patch Embeddings → Self-Attention → Cross-Attention ← MiniLM
                                                     ↓
