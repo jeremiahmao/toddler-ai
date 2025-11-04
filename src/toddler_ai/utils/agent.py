@@ -48,10 +48,9 @@ class ModelAgent(Agent):
             assert model_name is not None, "Need model name to create preprocessor"
             # Check if model uses MiniLM (has minilm_projection attribute)
             if hasattr(self.model, 'minilm_projection'):
-                # ViT model - use MiniLM preprocessor
                 obss_preprocessor = utils.MiniLMObssPreprocessor(model_name, None)
             else:
-                raise ValueError("Legacy FiLM-based models are no longer supported. Only ViT models with MiniLM are supported.")
+                raise ValueError("Model does not support MiniLM language encoding.")
 
         self.obss_preprocessor = obss_preprocessor
         self.device = next(self.model.parameters()).device

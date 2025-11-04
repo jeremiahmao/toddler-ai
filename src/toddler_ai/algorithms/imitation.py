@@ -140,7 +140,7 @@ class ImitationLearning(object):
             self.obss_preprocessor = utils.MiniLMObssPreprocessor(
                 args.model, observation_space, freeze_encoder=freeze_minilm)
         else:
-            raise ValueError(f"Unsupported instr_arch: {self.args.instr_arch}. Only 'minilm' is supported. Legacy GRU-based architectures have been removed.")
+            raise ValueError(f"Unsupported instr_arch: {self.args.instr_arch}. Only 'minilm' is supported.")
 
         # Define actor-critic model
         self.acmodel = utils.load_model(args.model, raise_not_found=False)
