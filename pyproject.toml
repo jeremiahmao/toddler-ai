@@ -15,14 +15,12 @@ dependencies = [
     "pygame>=2.4.0",
     "torch>=2.0.0",
     "blosc>=1.11.0",
+    "sentence-transformers>=2.2.0",  # Required for MiniLM language encoder
 ]
 
 [project.optional-dependencies]
 tracking = [
     "wandb>=0.16.0",
-]
-language = [
-    "sentence-transformers>=2.2.0",
 ]
 
 [tool.hatch.build.targets.wheel]

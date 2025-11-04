@@ -21,12 +21,11 @@ This repository contains a curated, organized selection of production-ready code
 - ✅ Level generation and verification utilities
 
 ### Models & Algorithms
-- ✅ **Vision Transformer (ViT)** - Modern attention-based architecture for vision-language grounding
-- ✅ **MiniLM Integration** - Pretrained language encoder (384-dim) with differential learning rates
+- ✅ **Vision Transformer (ViT)** - Modern attention-based architecture for vision-language grounding (REQUIRED)
+- ✅ **MiniLM Integration** - Pretrained language encoder (384-dim) with differential learning rates (REQUIRED)
 - ✅ **PPO Algorithm** - Proximal Policy Optimization ([Schulman et al., 2017](https://arxiv.org/abs/1707.06347)) with advantage normalization and optimized defaults for sparse rewards
 - ✅ **Imitation Learning** - Behavioral cloning for training from demonstrations (from BabyAI)
 - ✅ **Rule-based Bot** - Expert agent for generating demonstrations (from BabyAI)
-- ⚠️ **FiLM-based Actor-Critic** - DEPRECATED: Legacy CNN architecture (from BabyAI, kept for compatibility)
 
 ### Training & Evaluation
 - ✅ 6 ready-to-use scripts: train IL/RL, generate demos, evaluate, visualize
@@ -67,7 +66,7 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 git clone https://github.com/jeremiahmao/toddler-ai.git
 cd toddler-ai
 
-# Install core dependencies (creates venv automatically)
+# Install all dependencies (includes MiniLM)
 uv sync
 
 # Optional: Install wandb for experiment tracking
@@ -79,7 +78,7 @@ uv sync --extra tracking
 ```bash
 git clone https://github.com/jeremiahmao/toddler-ai.git
 cd toddler-ai
-pip install -e .
+pip install -e .  # Includes MiniLM
 
 # Optional: Install wandb for experiment tracking
 pip install -e ".[tracking]"
@@ -87,7 +86,7 @@ pip install -e ".[tracking]"
 
 ## Quick Start
 
-**By default, Toddler AI uses the modern ViT + MiniLM architecture.** All training scripts automatically use Vision Transformer for vision and pretrained MiniLM for language understanding. Legacy FiLM-based architectures are deprecated.
+**Toddler AI now exclusively uses the ViT + MiniLM architecture.** All training requires Vision Transformer for vision and pretrained MiniLM for language understanding. Legacy GRU/FiLM architectures have been removed.
 
 ### 1. Generate Demonstrations (using the bot)
 
@@ -99,54 +98,47 @@ The bot is a rule-based expert that can solve all BabyAI tasks perfectly, allowi
 
 ### 2. Train with Imitation Learning
 
-**ViT + MiniLM is now the default** - no need to specify `--arch` or `--instr-arch`!
+**ViT + MiniLM is the only supported architecture** - specify `--arch vit --instr-arch minilm`:
 
 ```bash
-# Quick test run (uses ViT + MiniLM by default)
+# Quick test run
 uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
-    --model test_model --batch-size 10 --epochs 50 --val-interval 10
+    --arch vit --instr-arch minilm --model test_model \
+    --batch-size 10 --epochs 50 --val-interval 10
 
-# With Weights & Biases tracking (requires: uv sync --extra tracking)
+# With Weights & Biases tracking
 uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
-    --model test_model --tb
+    --arch vit --instr-arch minilm --model test_model --tb
 
 # Small levels (GoToRedBall, GoToLocal, PickupLoc, PutNextLocal)
 uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos goto_local \
-    --batch-size 256 --val-episodes 512
+    --arch vit --instr-arch minilm --batch-size 256 --val-episodes 512
 
 # Larger levels
 uv run python scripts/train_il.py --env BabyAI-GoToDoor-v0 --demos goto_door \
+    --arch vit --instr-arch minilm \
     --memory-dim 2048 --recurrence 80 --batch-size 128 --epoch-length 51200
-```
-
-**Legacy FiLM architecture** (deprecated, for compatibility only):
-```bash
-uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
-    --arch bow_endpool_res --instr-arch gru --model legacy_model
 ```
 
 ### 3. Train with Reinforcement Learning (PPO)
 
-**PPO (Proximal Policy Optimization)** is the primary RL algorithm in Toddler AI. It uses clipped surrogate objectives and value function clipping for stable, efficient policy learning. **ViT + MiniLM is now the default architecture.**
+**PPO (Proximal Policy Optimization)** is the primary RL algorithm in Toddler AI. It uses clipped surrogate objectives and value function clipping for stable, efficient policy learning. **Only ViT + MiniLM is supported.**
 
 ```bash
-# Basic PPO training (uses ViT + MiniLM by default)
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0
+# Basic PPO training
+uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
+    --arch vit --instr-arch minilm
 
 # PPO with custom hyperparameters
 uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
+    --arch vit --instr-arch minilm \
     --frames 1000000 --lr 1e-4 --clip-eps 0.2 --ppo-epochs 4 \
     --batch-size 256 --frames-per-proc 128 --discount 0.99 --gae-lambda 0.99
 
 # PPO with pretrained model from imitation learning
 uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
+    --arch vit --instr-arch minilm \
     --pretrained-model models/your_il_model
-```
-
-**Legacy FiLM architecture** (deprecated):
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch bow_endpool_res --instr-arch gru
 ```
 
 **Key PPO hyperparameters (optimized for sparse rewards):**
@@ -178,7 +170,8 @@ uv run wandb login        # Login with your wandb account
 
 Then train with tracking:
 ```bash
-uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local --model my_model --tb
+uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
+    --arch vit --instr-arch minilm --model my_model --tb
 ```
 
 View your experiments at: https://wandb.ai
@@ -221,11 +214,11 @@ uv run python scripts/enjoy.py --env BabyAI-GoToLocal-v0 --model test_model
 
 Watch your trained agent solve tasks in real-time with rendering.
 
-## Model Architectures
+## Model Architecture
 
-### Vision Transformer (ViT) - RECOMMENDED ✨
+### Vision Transformer (ViT) + MiniLM
 
-**Modern attention-based architecture (default):**
+**The only supported architecture:**
 ```
 Image → Patch Embeddings → Self-Attention → Cross-Attention ← MiniLM
                                                     ↓
@@ -311,54 +304,20 @@ uv run python scripts/train_il.py \
 --freeze-minilm                   # Completely freeze encoder
 ```
 
-### Installation
+### Verify Installation
 
 ```bash
-# Install language model support
-uv sync --extra language
-
-# Verify installation
-uv run python -c "from sentence_transformers import SentenceTransformer; print('✓ Ready!')"
+# MiniLM is automatically included in core dependencies
+uv run python -c "from sentence_transformers import SentenceTransformer; print('✓ MiniLM ready!')"
 ```
 
-### Comparison: GRU vs MiniLM
+### Why MiniLM?
 
-| Feature | GRU (default) | MiniLM |
-|---------|---------------|---------|
-| Params | ~130K | 22.7M (freeze) or 23.9M (finetune) |
-| Pretrained | ❌ | ✅ |
-| Language understanding | Task-specific | General + task-adapted |
-| Training time | Fast | Slower (more params) |
-| Best for | Small envs, fast experiments | Complex instructions, transfer learning |
-
-### FiLM-based CNN (DEPRECATED) ⚠️
-
-**Legacy architecture kept for compatibility only.** Use ViT for new projects.
-
-**Feature-wise Linear Modulation - vision-specific conditioning:**
-```
-vision_features = conv(image)
-γ = weight(language_embedding)  # Scale
-β = bias(language_embedding)    # Shift
-output = γ * vision_features + β  # Language conditions vision!
-```
-
-**With MiniLM:**
-```
-Text → MiniLM (22.7M) → Projection (49K) → FiLM → Actor/Critic
-```
-
-**When to use FiLM:**
-- You have existing FiLM-trained models to fine-tune
-- You need compatibility with older BabyAI code
-- **For new projects, use ViT instead**
-
-**Usage:**
-```bash
-# Legacy FiLM architecture
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch bow_endpool_res --instr-arch gru
-```
+MiniLM provides pre-trained language understanding (22.7M params trained on 1B+ sentence pairs), offering:
+- ✅ **Better generalization** - Understands natural language instructions out-of-the-box
+- ✅ **Transfer learning** - Leverages knowledge from massive text corpora
+- ✅ **Semantic understanding** - Captures meaning, not just token patterns
+- ✅ **Task adaptation** - Fine-tunes to BabyAI tasks while retaining general knowledge
 
 ## PPO Training Stability
 

@@ -51,8 +51,7 @@ class ModelAgent(Agent):
                 # ViT model - use MiniLM preprocessor
                 obss_preprocessor = utils.MiniLMObssPreprocessor(model_name, None)
             else:
-                # Legacy FiLM model - use regular preprocessor
-                obss_preprocessor = utils.ObssPreprocessor(model_name)
+                raise ValueError("Legacy FiLM-based models are no longer supported. Only ViT models with MiniLM are supported.")
 
         self.obss_preprocessor = obss_preprocessor
         self.device = next(self.model.parameters()).device
@@ -178,7 +177,7 @@ def load_agent(env, model_name, demos_name=None, demos_origin=None, argmax=True,
     if model_name == 'BOT':
         return BotAgent(env)
     elif model_name is not None:
-        obss_preprocessor = utils.ObssPreprocessor(model_name, env.observation_space)
+        obss_preprocessor = utils.MiniLMObssPreprocessor(model_name, env.observation_space)
         return ModelAgent(model_name, obss_preprocessor, argmax)
     elif demos_origin is not None or demos_name is not None:
         return DemoAgent(demos_name=demos_name, env_name=env_name, origin=demos_origin)

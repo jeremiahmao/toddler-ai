@@ -11,7 +11,11 @@ from toddler_ai.utils.agent import load_agent, Agent, ModelAgent, BotAgent, Demo
 from toddler_ai.utils.demos import get_demos_path, load_demos, save_demos
 from toddler_ai.utils.model import get_model_dir, get_model_path, load_model, save_model
 from toddler_ai.utils.log import configure_logging, get_log_path, get_log_dir, synthesize
-from toddler_ai.utils.format import get_vocab_path, ObssPreprocessor, IntObssPreprocessor, MiniLMObssPreprocessor
+from toddler_ai.utils.format import (
+    ObservationPreprocessor,
+    MiniLMPreprocessor,
+    MiniLMObssPreprocessor,  # Backward compatibility
+)
 
 
 def storage_dir():
@@ -64,10 +68,9 @@ __all__ = [
     "get_log_path",
     "get_log_dir",
     "synthesize",
-    "get_vocab_path",
-    "ObssPreprocessor",
-    "IntObssPreprocessor",
-    "MiniLMObssPreprocessor",
+    "ObservationPreprocessor",
+    "MiniLMPreprocessor",
+    "MiniLMObssPreprocessor",  # Backward compatibility
     "storage_dir",
     "create_folders_if_necessary",
 ]
