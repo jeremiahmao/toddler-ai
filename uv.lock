@@ -1746,13 +1746,11 @@ dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "pygame" },
+    { name = "sentence-transformers" },
     { name = "torch" },
 ]
 
 [package.optional-dependencies]
-language = [
-    { name = "sentence-transformers" },
-]
 tracking = [
     { name = "wandb" },
 ]
@@ -1773,11 +1771,11 @@ requires-dist = [
     { name = "minigrid", specifier = ">=2.3.0" },
     { name = "numpy", specifier = ">=1.24.0" },
     { name = "pygame", specifier = ">=2.4.0" },
-    { name = "sentence-transformers", marker = "extra == 'language'", specifier = ">=2.2.0" },
+    { name = "sentence-transformers", specifier = ">=2.2.0" },
     { name = "torch", specifier = ">=2.0.0" },
     { name = "wandb", marker = "extra == 'tracking'", specifier = ">=0.16.0" },
 ]
-provides-extras = ["tracking", "language"]
+provides-extras = ["tracking"]
 
 [package.metadata.requires-dev]
 dev = [

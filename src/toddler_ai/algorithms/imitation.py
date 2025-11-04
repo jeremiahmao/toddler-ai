@@ -140,8 +140,7 @@ class ImitationLearning(object):
             self.obss_preprocessor = utils.MiniLMObssPreprocessor(
                 args.model, observation_space, freeze_encoder=freeze_minilm)
         else:
-            self.obss_preprocessor = utils.ObssPreprocessor(args.model, observation_space,
-                                                            getattr(self.args, 'pretrained_model', None))
+            raise ValueError(f"Unsupported instr_arch: {self.args.instr_arch}. Only 'minilm' is supported. Legacy GRU-based architectures have been removed.")
 
         # Define actor-critic model
         self.acmodel = utils.load_model(args.model, raise_not_found=False)
@@ -172,9 +171,6 @@ class ImitationLearning(object):
                                            args.image_dim, args.memory_dim, args.instr_dim,
                                            not self.args.no_instr, self.args.instr_arch,
                                            not self.args.no_mem, self.args.arch)
-        # Save vocab (only for non-MiniLM models)
-        if hasattr(self.obss_preprocessor, 'vocab'):
-            self.obss_preprocessor.vocab.save()
         utils.save_model(self.acmodel, args.model)
 
         self.acmodel.train()
@@ -609,8 +605,6 @@ class ImitationLearning(object):
                     if torch.cuda.is_available():
                         self.acmodel.cpu()
                     utils.save_model(self.acmodel, self.args.model + "_best")
-                    if hasattr(self.obss_preprocessor, 'vocab'):
-                        self.obss_preprocessor.vocab.save(utils.get_vocab_path(self.args.model + "_best"))
                     self.acmodel.to(self.device)
                 else:
                     status['patience'] += 1
@@ -619,8 +613,6 @@ class ImitationLearning(object):
 
                 self.acmodel.cpu()
                 utils.save_model(self.acmodel, self.args.model)
-                if hasattr(self.obss_preprocessor, 'vocab'):
-                    self.obss_preprocessor.vocab.save()
                 self.acmodel.to(self.device)
                 with open(status_path, 'w') as dst:
                     json.dump(status, dst)

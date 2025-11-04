@@ -93,10 +93,8 @@ if __name__ == '__main__':
             freeze_encoder=getattr(args, 'freeze_minilm', False)
         )
         logger.info('Using MiniLM language encoder (pretrained)')
-    elif 'emb' in args.arch:
-        obss_preprocessor = utils.IntObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
     else:
-        obss_preprocessor = utils.ObssPreprocessor(args.model, envs[0].observation_space, args.pretrained_model)
+        raise ValueError(f"Unsupported instr_arch: {args.instr_arch}. Only 'minilm' is supported. Legacy GRU-based architectures have been removed.")
 
     # Define actor-critic model
     acmodel = utils.load_model(args.model, raise_not_found=False)
@@ -128,9 +126,6 @@ if __name__ == '__main__':
                                   args.image_dim, args.memory_dim, args.instr_dim,
                                   not args.no_instr, args.instr_arch, not args.no_mem, args.arch)
 
-    # Save vocab (only for non-MiniLM models)
-    if hasattr(obss_preprocessor, 'vocab'):
-        obss_preprocessor.vocab.save()
     utils.save_model(acmodel, args.model)
 
     # Define actor-critic algo
@@ -271,12 +266,9 @@ if __name__ == '__main__':
 
             csv_writer.writerow(data)
 
-        # Save obss preprocessor vocabulary and model
+        # Save model
 
         if args.save_interval > 0 and status['i'] % args.save_interval == 0:
-            # Save vocab (only for non-MiniLM models)
-            if hasattr(obss_preprocessor, 'vocab'):
-                obss_preprocessor.vocab.save()
             with open(status_path, 'w') as dst:
                 json.dump(status, dst)
                 utils.save_model(acmodel, args.model)
@@ -298,7 +290,6 @@ if __name__ == '__main__':
                 save_model = True
             if save_model:
                 utils.save_model(acmodel, args.model + '_best')
-                obss_preprocessor.vocab.save(utils.get_vocab_path(args.model + '_best'))
                 logger.info("Return {: .2f}; best model is saved".format(mean_return))
             else:
                 logger.info("Return {: .2f}; not the best model; not saved".format(mean_return))
