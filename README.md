@@ -7,7 +7,7 @@ A research platform for grounded language learning with unified concept space ar
 Toddler AI is a cognitive architecture research platform featuring:
 
 - **Unified Concept Space ViT** - Novel architecture where vision, language, and actions share a 256-dim embedding space with predictive processing
-- **Vision Transformer Models** - Modern attention-based architectures replacing legacy CNN+FiLM approaches
+- **Vision Transformer Models** - Attention-based architectures for vision-language grounding
 - **BabyAI Environments** from [Minigrid](https://github.com/Farama-Foundation/Minigrid) - Grid-world tasks with natural language instructions
 - **Modern RL Training** - PPO with sparse reward handling, advantage normalization, and auxiliary prediction losses
 - **Modern Tooling** - Python 3.10+, PyTorch 2.0+, Gymnasium, MiniLM language encoder, Weights & Biases
@@ -90,11 +90,9 @@ pip install -e ".[tracking]"
 
 ## Quick Start
 
-**Toddler AI uses modern attention-based architectures with MiniLM language encoding:**
+**Available architectures:**
 - **unified_vit** (RECOMMENDED): Unified concept space with predictive processing
-- **vit**: Standard Vision Transformer with cross-attention
-
-Legacy GRU/FiLM architectures have been removed.
+- **vit**: Vision Transformer with cross-attention
 
 ### 1. Generate Demonstrations (using the bot)
 
@@ -448,7 +446,6 @@ toddler-ai/
 │   ├── models/                  # Neural network models
 │   │   ├── unified_vit_model.py # Unified concept space ViT with predictive processing (RECOMMENDED)
 │   │   ├── vit_model.py         # Vision Transformer with cross-attention
-│   │   ├── ac_model.py          # DEPRECATED: Legacy FiLM-based CNN (use ViT models instead)
 │   │   ├── rl_base.py           # Base RL model interface
 │   │   └── format.py            # Model formatting utilities
 │   ├── algorithms/              # Training algorithms
