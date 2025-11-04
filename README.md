@@ -1,32 +1,33 @@
 # Toddler AI
 
-A modern, clean implementation combining Minigrid environments with BabyAI training infrastructure for grounded language learning research.
+A research platform for grounded language learning with unified concept space architectures, built on Minigrid environments.
 
 ## Overview
 
-Toddler AI integrates the best components from two foundational projects:
+Toddler AI is a cognitive architecture research platform featuring:
 
-- **Environments** from [Minigrid](https://github.com/Farama-Foundation/Minigrid) (Farama Foundation) - BabyAI grid-world environments with language instructions
-- **Training Infrastructure** from [BabyAI](https://github.com/mila-iqia/babyai) (Mila) - Complete imitation learning and RL training pipelines
-- **Modern Tooling** - Modernized with Python 3.10+, PyTorch 2.0+, Gymnasium, and `uv` package management
+- **Unified Concept Space ViT** - Novel architecture where vision, language, and actions share a 256-dim embedding space with predictive processing
+- **Vision Transformer Models** - Modern attention-based architectures replacing legacy CNN+FiLM approaches
+- **BabyAI Environments** from [Minigrid](https://github.com/Farama-Foundation/Minigrid) - Grid-world tasks with natural language instructions
+- **Modern RL Training** - PPO with sparse reward handling, advantage normalization, and auxiliary prediction losses
+- **Modern Tooling** - Python 3.10+, PyTorch 2.0+, Gymnasium, MiniLM language encoder, Weights & Biases
 
 ## What's Included
 
 This repository contains a curated, organized selection of production-ready code:
 
-### Environments (from Minigrid)
-- ✅ Core Minigrid engine (`minigrid_env.py`, grid system, actions, objects)
-- ✅ 7 BabyAI environment categories (GoTo, Open, Pickup, PutNext, Synth, Unlock, Other)
+### Environments
+- ✅ BabyAI grid-world tasks from Minigrid (7 categories: GoTo, Open, Pickup, PutNext, Synth, Unlock, Other)
 - ✅ Environment wrappers for observation/action space customization
 - ✅ Level generation and verification utilities
 
 ### Models & Algorithms
 - ✅ **Unified Concept Space ViT** - Cognitive architecture with predictive processing (256-dim unified space) (RECOMMENDED)
 - ✅ **Vision Transformer (ViT)** - Modern attention-based architecture for vision-language grounding
-- ✅ **MiniLM Integration** - Pretrained language encoder (384-dim) with differential learning rates (REQUIRED)
-- ✅ **PPO Algorithm** - Proximal Policy Optimization ([Schulman et al., 2017](https://arxiv.org/abs/1707.06347)) with advantage normalization and optimized defaults for sparse rewards
-- ✅ **Imitation Learning** - Behavioral cloning for training from demonstrations (from BabyAI)
-- ✅ **Rule-based Bot** - Expert agent for generating demonstrations (from BabyAI)
+- ✅ **MiniLM Integration** - Pretrained sentence transformer (384-dim, 22.7M params, frozen encoder + trainable projection)
+- ✅ **PPO Algorithm** - Proximal Policy Optimization with advantage normalization and auxiliary prediction losses for sparse rewards
+- ✅ **Imitation Learning** - Behavioral cloning for training from demonstrations
+- ✅ **Rule-based Bot** - Expert agent for generating demonstrations
 
 ### Training & Evaluation
 - ✅ 6 ready-to-use scripts: train IL/RL, generate demos, evaluate, visualize
@@ -41,19 +42,21 @@ This repository contains a curated, organized selection of production-ready code
 - ✅ pytest test suite
 - ✅ Type checking with pyright
 
-## Key Updates from Original Repos
+## Modern Stack
 
-**Modernized Dependencies:**
-- Python 3.6 → **3.10+**
-- PyTorch 0.4.1 → **2.0+**
-- gym → **gymnasium 0.29+**
-- tensorboardX → **Weights & Biases (wandb)**
+**Dependencies:**
+- Python 3.10+
+- PyTorch 2.0+
+- Gymnasium 0.29+
+- sentence-transformers (MiniLM)
+- Weights & Biases (wandb) for tracking
 - Automatic GPU acceleration (CUDA supported, MPS in progress)
 
-**Improved Organization:**
-- Flat structure → **clean `src/` layout**
-- Mixed modules → **separated envs/models/algorithms/agents/utils**
-- Old packaging → **modern pyproject.toml with uv**
+**Architecture Innovations:**
+- Unified concept space (256-dim) for vision, language, and actions
+- Predictive processing with vision and progress prediction heads
+- Reusable action embeddings for history encoding and action selection
+- Advantage normalization for stable sparse reward learning
 
 ## Installation
 
@@ -201,9 +204,8 @@ Toddler AI automatically detects and uses the best available device:
 
 **Apple Silicon (MPS):**
 - Currently disabled due to PyTorch MPS limitations with certain operations
-- Training runs on CPU (still fast for these small models)
+- Training runs on CPU (still fast for these small models and MiniLM)
 - Will be enabled once PyTorch MPS support matures
-- MPS will provide significant benefits when we integrate larger language models (MiniLM coming soon)
 
 **CPU:**
 - Works well for all training tasks
@@ -444,7 +446,9 @@ toddler-ai/
 │   │   ├── minigrid_env.py      # Base Minigrid environment class
 │   │   └── wrappers.py          # Observation/action wrappers
 │   ├── models/                  # Neural network models
-│   │   ├── ac_model.py          # Actor-Critic with FiLM conditioning
+│   │   ├── unified_vit_model.py # Unified concept space ViT with predictive processing (RECOMMENDED)
+│   │   ├── vit_model.py         # Vision Transformer with cross-attention
+│   │   ├── ac_model.py          # DEPRECATED: Legacy FiLM-based CNN (use ViT models instead)
 │   │   ├── rl_base.py           # Base RL model interface
 │   │   └── format.py            # Model formatting utilities
 │   ├── algorithms/              # Training algorithms
@@ -549,6 +553,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Acknowledgments
 
-- [Farama Foundation](https://farama.org/) for maintaining Minigrid
-- [Mila](https://mila.quebec/en/) for creating BabyAI
-- Original authors of both projects
+- [Farama Foundation](https://farama.org/) for Minigrid environments
+- [Mila](https://mila.quebec/en/) for BabyAI language-conditioned tasks and rule-based bot
+- OpenAI for PPO algorithm ([Schulman et al., 2017](https://arxiv.org/abs/1707.06347))
+- Microsoft for MiniLM sentence transformer ([Wang et al., 2020](https://arxiv.org/abs/2002.10957))
