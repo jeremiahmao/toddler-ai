@@ -293,6 +293,9 @@ if __name__ == '__main__':
             agent = ModelAgent(args.model, obss_preprocessor, argmax=True)
             agent.model = acmodel
             agent.model.eval()
+            # Ensure preprocessor encoder is on correct device for evaluation
+            if hasattr(obss_preprocessor, 'minilm_encoder') and obss_preprocessor.minilm_encoder is not None:
+                obss_preprocessor.minilm_encoder.to(algo.device)
             logs = batch_evaluate(agent, test_env_name, args.val_seed, args.val_episodes, pixel=use_pixel)
             agent.model.train()
             mean_return = np.mean(logs["return_per_episode"])

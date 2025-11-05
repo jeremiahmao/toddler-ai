@@ -69,19 +69,7 @@ class BaseAlgo(ABC):
         self.aux_info = aux_info
 
         # Store helpers values
-
-        # Note: MPS has compatibility issues with some operations in RL training
-        # (view/reshape in backward pass). Using CPU/CUDA for now.
-        # MPS will be more beneficial when we add MiniLM encoder anyway.
-        device = utils.get_device()
-        if device.type == 'mps':
-            import logging
-            logging.getLogger(__name__).info(
-                "MPS device detected but using CPU for RL training due to PyTorch MPS limitations. "
-                "This will be addressed in future updates.")
-            self.device = torch.device('cpu')
-        else:
-            self.device = device
+        self.device = utils.get_device()
 
         self.num_procs = len(envs)
         self.num_frames = self.num_frames_per_proc * self.num_procs

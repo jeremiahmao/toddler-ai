@@ -176,17 +176,7 @@ class ImitationLearning(object):
         self.acmodel.train()
 
         # Auto-detect best available device (CUDA > MPS > CPU)
-        # Note: MPS has compatibility issues with view/reshape operations
-        # Using CPU/CUDA for now until PyTorch MPS matures
-        device = utils.get_device()
-        if device.type == 'mps':
-            import logging
-            logging.getLogger(__name__).info(
-                "MPS device detected but using CPU for training due to PyTorch MPS limitations. "
-                "This will be addressed in future updates.")
-            self.device = torch.device('cpu')
-        else:
-            self.device = device
+        self.device = utils.get_device()
         self.acmodel.to(self.device)
 
         # Setup optimizer with differential learning rates
