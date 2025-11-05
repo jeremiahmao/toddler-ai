@@ -53,9 +53,10 @@ This repository contains a curated, organized selection of production-ready code
 - Automatic GPU acceleration (CUDA supported, MPS in progress)
 
 **Architecture Innovations:**
-- Unified concept space (256-dim) for vision, language, and actions
-- Predictive processing with vision and progress prediction heads
-- Reusable action embeddings for history encoding and action selection
+- Unified concept space (256-dim) for vision, language, and action history
+- Predictive processing with vision prediction (supplemental, weak coefficient)
+- Action embeddings for encoding action history into unified concept space
+- Specialized MLP output heads for action selection and value estimation
 - Advantage normalization for stable sparse reward learning
 
 ## Installation
@@ -242,40 +243,46 @@ Actions (history) → [10, 256] ─┼─→ Unified Buffer [~60, 256] → Self-
 Vision (patches) → [49, 256] ─┘                                                           ↓
                                                                           ┌─────────────────┴─────────────────┐
                                                                           ↓                                     ↓
-                                                                    Action Logits                         Predictions
-                                                               (state @ actions.T)                    (vision + progress)
+                                                                    Output Heads                          Predictions
+                                                             (MLP Actor + MLP Critic)               (vision, supplemental)
 ```
 
 **Key Features:**
-1. **Unified 256-dim concept space** - All modalities (vision, language, action) share same embedding dimension
-2. **Reusable action embeddings** - Same [7, 256] matrix encodes history AND selects next action
+1. **Unified 256-dim concept space** - Vision, language, and action history encoded in shared embedding space for multimodal understanding
+2. **Action embeddings for history** - [7, 256] matrix encodes past actions into concept space (NOT used for action selection)
 3. **Working memory** - Last 10 actions with temporal position encodings
-4. **Predictive processing** - Model predicts next observation patches and goal progress
+4. **Predictive processing** - Model predicts next observation patches (supplemental, weak 0.01 coefficient)
 5. **Self-attention over everything** - Goal, action history, and vision patches all attend to each other
+6. **Specialized output heads** - MLP actor for action selection, MLP critic for value estimation
 
 **Architecture Flow:**
 1. **MiniLM Projection (98K)**: 384-dim → 256-dim concept space
 2. **Patch Embedding (768)**: 7×7 image → 49 tokens (256-dim each)
-3. **Action Embeddings (1.8K)**: 7 actions × 256-dim (reused for history + selection)
-4. **Unified Self-Attention (2.6M)**: 2 layers, 4 heads over concatenated [goal, actions, vision]
+3. **Action Embeddings (1.8K)**: 7 actions × 256-dim (for encoding action history only)
+4. **Unified Self-Attention (2.6M)**: 2 layers, 4 heads over concatenated [goal, action_history, vision]
 5. **Pool (65K)**: Mean pool → single 256-dim state concept
-6. **Actor**: state_concept @ action_embeddings.T → action logits
-7. **Critic (33K)**: state_concept → value
-8. **Vision Predictor (3.2M)**: state_concept → next observation patches [49, 256]
-9. **Progress Predictor (16K)**: state_concept → goal progress [-1, 1]
+6. **Actor Head (33K)**: MLP (256 → 128 → 7) → action logits (stable gradients, proper entropy)
+7. **Critic Head (33K)**: MLP (256 → 128 → 1) → value
+8. **Vision Predictor (3.2M)**: state_concept → next observation patches [49, 256] (supplemental, 0.01 coefficient)
 
 **Why Unified Concept Space?**
-- **Semantic actions**: Actions are concepts with meaning, not just indices
-- **Dense learning signal**: Prediction errors provide feedback every timestep, not just sparse rewards
-- **Natural memory**: Temporal position encodings create smooth memory decay
-- **Efficient**: Single attention mechanism over all modalities
+- **Multimodal understanding**: Vision, language, and action history encoded in shared semantic space
+- **Cross-modal attention**: Goal can attend to vision, vision to action history, creating rich contextual understanding
+- **Supplemental prediction**: Vision prediction provides dense learning signal to improve representations (weak 0.01 coefficient)
+- **Natural memory**: Temporal position encodings create smooth memory decay for action history
+- **Efficient**: Single attention mechanism processes all modalities together
 
-**Predictive Processing:**
-The model learns environment dynamics by predicting:
-- **Next vision**: What will I see after taking this action? (MSE loss vs. actual next patches)
-- **Goal progress**: Am I getting closer to the goal? (MSE loss vs. reward signal)
+**Mental Model:**
+```
+Inputs (Multimodal) → Unified Concept Space (Understanding) → Specialized Outputs (Decisions)
+     ↓                            ↓                                      ↓
+Goal + Vision + History    Self-Attention Reasoning          MLP Actor + MLP Critic
+```
 
-Learning from prediction errors (surprise) teaches the model how the world works, providing a dense training signal even in sparse reward environments.
+The unified concept space is for **perception and understanding** of the multimodal context. Actions are **task-specific outputs** produced from that understanding, using specialized MLP heads that provide stable gradients and proper entropy.
+
+**Predictive Processing (Supplemental):**
+Vision prediction helps learn better representations by predicting next observation patches (MSE loss, 0.01 coefficient). This is intentionally weak to not interfere with the primary RL objective, but provides a small auxiliary signal for representation learning.
 
 ### Standard Vision Transformer (ViT) + MiniLM
 

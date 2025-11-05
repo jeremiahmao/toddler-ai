@@ -125,7 +125,7 @@ if __name__ == '__main__':
                 logger.info('  - All modalities in 256-dim concept space')
                 logger.info('  - Reusable action embeddings')
                 logger.info('  - Working memory with temporal positions')
-                logger.info('  - Vision + progress prediction')
+                logger.info('  - Vision prediction (supplemental, weak coefficient)')
                 acmodel = UnifiedViTACModel(
                     obs_space=obss_preprocessor.obs_space,
                     action_space=envs[0].action_space,
@@ -137,8 +137,7 @@ if __name__ == '__main__':
                     attn_heads=getattr(args, 'attn_heads', 4),
                     dropout=getattr(args, 'dropout', 0.1),
                     history_length=getattr(args, 'history_length', 10),
-                    vision_pred_coef=getattr(args, 'vision_pred_coef', 0.1),
-                    progress_pred_coef=getattr(args, 'progress_pred_coef', 0.1)
+                    vision_pred_coef=getattr(args, 'vision_pred_coef', 0.01)  # Very weak - supplemental only
                 )
             else:
                 raise ValueError(f"Unsupported architecture: {args.arch}. Supported: unified_vit, vit")

@@ -110,7 +110,8 @@ class PPOAlgo(BaseAlgo):
 
                     loss = policy_loss - self.entropy_coef * entropy + self.value_loss_coef * value_loss
 
-                    # Auxiliary prediction losses (if model supports predictive processing)
+                    # Auxiliary vision prediction loss (supplemental - helps learn better representations)
+                    # This should be weak (coef ~0.01) to not interfere with RL objective
                     if 'vision_pred' in extra_predictions and extra_predictions['vision_pred'] is not None:
                         # Vision prediction loss: predict next observation patches
                         # We need next observation - get it from next timestep in batch
@@ -126,24 +127,9 @@ class PPOAlgo(BaseAlgo):
                             vision_pred = extra_predictions['vision_pred']
                             vision_pred_loss = F.mse_loss(vision_pred, vision_target)
 
-                            # Get vision prediction coefficient from model
-                            vision_coef = getattr(self.acmodel, 'vision_pred_coef', 0.1)
+                            # Get vision prediction coefficient from model (default 0.01 - very weak)
+                            vision_coef = getattr(self.acmodel, 'vision_pred_coef', 0.01)
                             loss = loss + vision_coef * vision_pred_loss
-
-                        # Progress prediction loss: based on reward signal
-                        if 'progress_pred' in extra_predictions:
-                            # Map reward to progress: positive reward = progress toward goal
-                            # For sparse binary rewards: 1.0 if reward > 0, -0.1 otherwise
-                            progress_target = torch.where(
-                                sb.reward > 0,
-                                torch.ones_like(sb.reward),
-                                -0.1 * torch.ones_like(sb.reward)
-                            )
-                            progress_pred = extra_predictions['progress_pred']
-                            progress_pred_loss = F.mse_loss(progress_pred, progress_target)
-
-                            progress_coef = getattr(self.acmodel, 'progress_pred_coef', 0.1)
-                            loss = loss + progress_coef * progress_pred_loss
 
                     # Update batch values
 

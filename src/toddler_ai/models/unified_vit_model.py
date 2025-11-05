@@ -2,14 +2,15 @@
 Unified Concept Space Vision Transformer (ViT) with Predictive Processing.
 
 Cognitive architecture inspired by human toddler learning:
-- All modalities (vision, language, action) in unified 256-dim concept space
+- All modalities (vision, language, action history) in unified 256-dim concept space
 - Working memory: action history buffer with temporal position encodings
-- Reusable action embeddings for both history encoding and action selection
-- Predictive processing: model predicts next observations and goal progress
-- Self-attention over entire context (goal + actions + vision)
+- Action embeddings for encoding action history into concept space
+- Predictive processing: model predicts next observations (supplemental)
+- Self-attention over entire context (goal + action_history + vision)
+- Specialized MLP output heads for action selection and value estimation
 
-Key innovation: Actions are semantic concepts, not just indices.
-The same action embeddings encode "what I did" and select "what to do next".
+Mental model: Inputs (multimodal) → Unified Concept Space (understanding) → Outputs (decisions).
+The unified space is for perception and understanding; actions are task-specific outputs.
 """
 
 import torch
@@ -152,13 +153,12 @@ class UnifiedViTACModel(nn.Module):
     2. MiniLM goal → projected to [256]
     3. Action history → embedded via action_embedding [history_len, 256]
     4. Concatenate [goal, action_history, vision_patches] → buffer [~60, 256]
-    5. Self-attention over entire buffer
+    5. Self-attention over entire buffer (unified concept space for understanding)
     6. Pool buffer → state_concept [256]
-    7. Outputs:
-       - Action: state_concept @ action_embedding.T → logits [7]
-       - Value: critic_head(state_concept) → [1]
-       - Next vision prediction: [49, 256]
-       - Goal progress prediction: [1]
+    7. Outputs (specialized heads for task-specific decisions):
+       - Action: MLP actor head (256 → 128 → 7) → action logits
+       - Value: MLP critic head (256 → 128 → 1) → value
+       - Vision prediction (supplemental, 0.01 coef): [49, 256] - predicts next observation
     """
     def __init__(
         self,
@@ -172,8 +172,7 @@ class UnifiedViTACModel(nn.Module):
         attn_heads=4,  # Number of attention heads
         dropout=0.1,
         history_length=10,  # Number of past actions to remember
-        vision_pred_coef=0.1,  # Coefficient for vision prediction loss
-        progress_pred_coef=0.1  # Coefficient for progress prediction loss
+        vision_pred_coef=0.01  # Coefficient for vision prediction loss (supplemental, weak)
     ):
         super().__init__()
 
@@ -183,7 +182,6 @@ class UnifiedViTACModel(nn.Module):
         self.num_actions = action_space.n
         self.history_length = history_length if use_memory else 0
         self.vision_pred_coef = vision_pred_coef
-        self.progress_pred_coef = progress_pred_coef
 
         # MiniLM projection (384-dim → embed_dim)
         if "minilm_emb" in obs_space:
@@ -201,7 +199,7 @@ class UnifiedViTACModel(nn.Module):
         )
         self.num_patches = self.patch_embed.num_patches
 
-        # Action embeddings (reusable for history and selection)
+        # Action embeddings (for encoding action history into concept space)
         self.action_embeddings = nn.Embedding(self.num_actions, embed_dim)
 
         # Temporal position embeddings for action history
@@ -223,6 +221,14 @@ class UnifiedViTACModel(nn.Module):
             nn.Tanh()
         )
 
+        # Actor head (policy)
+        # Standard MLP for stable action selection with proper gradient flow
+        self.actor = nn.Sequential(
+            nn.Linear(embed_dim, 128),
+            nn.Tanh(),
+            nn.Linear(128, self.num_actions)
+        )
+
         # Critic head (value function)
         self.critic = nn.Sequential(
             nn.Linear(embed_dim, 128),
@@ -232,18 +238,12 @@ class UnifiedViTACModel(nn.Module):
 
         # Predictive heads
         # Vision predictor: predict next patch embeddings
+        # This is supplemental - helps learn better representations by predicting state transitions
+        # Should use weak coefficient (0.01-0.05) to not interfere with RL objective
         self.vision_predictor = nn.Sequential(
             nn.Linear(embed_dim, embed_dim * 2),
             nn.GELU(),
             nn.Linear(embed_dim * 2, self.num_patches * embed_dim)
-        )
-
-        # Progress predictor: predict goal progress
-        self.progress_predictor = nn.Sequential(
-            nn.Linear(embed_dim, 64),
-            nn.Tanh(),
-            nn.Linear(64, 1),
-            nn.Tanh()  # Output in [-1, 1]
         )
 
         # Initialize all parameters
@@ -335,9 +335,9 @@ class UnifiedViTACModel(nn.Module):
 
         # 7. Generate outputs
 
-        # Action selection: dot product with action embeddings
-        # This creates semantic action space where similar actions have similar embeddings
-        action_logits = state_concept @ self.action_embeddings.weight.T  # [B, num_actions]
+        # Action selection: standard MLP actor head
+        # This provides stable gradients and proper entropy
+        action_logits = self.actor(state_concept)  # [B, num_actions]
         dist = Categorical(logits=F.log_softmax(action_logits, dim=1))
 
         # Value function
@@ -345,17 +345,14 @@ class UnifiedViTACModel(nn.Module):
 
         # Predictive outputs
         # Vision prediction: what will I see next?
+        # This is supplemental - helps learn better state representations
         vision_pred_flat = self.vision_predictor(state_concept)  # [B, num_patches * embed_dim]
         vision_pred = vision_pred_flat.view(batch_size, self.num_patches, self.embed_dim)  # [B, num_patches, embed_dim]
-
-        # Progress prediction: am I getting closer to goal?
-        progress_pred = self.progress_predictor(state_concept).squeeze(1)  # [B]
 
         # Package predictions for loss computation
         extra_predictions = {
             'vision_pred': vision_pred,
-            'current_vision': current_vision_patches,
-            'progress_pred': progress_pred
+            'current_vision': current_vision_patches
         }
 
         return {
