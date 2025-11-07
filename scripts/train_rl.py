@@ -35,8 +35,8 @@ parser.add_argument("--reward-scale", type=float, default=1.0,
                     help="Reward scale multiplier (default: 1.0, optimal for sparse rewards)")
 parser.add_argument("--gae-lambda", type=float, default=0.99,
                     help="lambda coefficient in GAE formula (default: 0.99, 1 means no gae)")
-parser.add_argument("--value-loss-coef", type=float, default=0.25,
-                    help="value loss term coefficient (default: 0.25, tuned for sparse rewards)")
+parser.add_argument("--value-loss-coef", type=float, default=0.1,
+                    help="value loss term coefficient (default: 0.1, tuned for sparse rewards)")
 parser.add_argument("--max-grad-norm", type=float, default=0.5,
                     help="maximum norm of gradient (default: 0.5)")
 parser.add_argument("--clip-eps", type=float, default=0.2,
