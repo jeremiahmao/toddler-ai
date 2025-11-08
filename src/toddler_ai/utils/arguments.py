@@ -41,8 +41,8 @@ class ArgumentParser(argparse.ArgumentParser):
                             help="number of examples per epoch; the whole dataset is used by if 0")
         self.add_argument("--frames-per-proc", type=int, default=40,
                             help="number of frames per process before update (default: 40)")
-        self.add_argument("--lr", type=float, default=1e-4,
-                            help="learning rate (default: 1e-4)")
+        self.add_argument("--lr", type=float, default=5e-5,
+                            help="learning rate (default: 5e-5)")
         self.add_argument("--beta1", type=float, default=0.9,
                             help="beta1 for Adam (default: 0.9)")
         self.add_argument("--beta2", type=float, default=0.999,
@@ -55,8 +55,8 @@ class ArgumentParser(argparse.ArgumentParser):
                             help="RMSprop optimizer apha (default: 0.99)")
         self.add_argument("--batch-size", type=int, default=1280,
                                 help="batch size for PPO (default: 1280)")
-        self.add_argument("--entropy-coef", type=float, default=0.01,
-                            help="entropy term coefficient (default: 0.01)")
+        self.add_argument("--entropy-coef", type=float, default=0.05,
+                            help="entropy term coefficient (default: 0.05)")
 
         # Model parameters
         self.add_argument("--image-dim", type=int, default=128,

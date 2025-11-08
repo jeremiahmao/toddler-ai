@@ -50,7 +50,7 @@ This repository contains a curated, organized selection of production-ready code
 - Gymnasium 0.29+
 - sentence-transformers (MiniLM)
 - Weights & Biases (wandb) for tracking
-- Automatic GPU acceleration (CUDA supported, MPS in progress)
+- Automatic GPU acceleration (CUDA on NVIDIA, MPS on Apple Silicon, CPU fallback)
 
 **Architecture Innovations:**
 - Unified concept space (256-dim) for vision, language, and action history
@@ -148,7 +148,7 @@ uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
 # PPO with custom hyperparameters
 uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
     --arch unified_vit --instr-arch minilm \
-    --frames 1000000 --lr 1e-4 --clip-eps 0.2 --ppo-epochs 4 \
+    --frames 1000000 --lr 5e-5 --entropy-coef 0.05 --clip-eps 0.2 --ppo-epochs 4 \
     --batch-size 256 --frames-per-proc 128 --discount 0.99 --gae-lambda 0.99
 
 # PPO with pretrained model from imitation learning
@@ -158,11 +158,13 @@ uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
 ```
 
 **Key PPO hyperparameters (optimized for sparse rewards):**
+- `--lr`: Learning rate (default: **5e-5**, tuned for pretrained MiniLM encoder)
+- `--entropy-coef`: Entropy coefficient (default: **0.05**, maintains exploration)
+- `--value-loss-coef`: Value loss coefficient (default: **0.1**, tuned for stability with pretrained models)
 - `--reward-scale`: Reward multiplier (default: **1.0**, optimal for BabyAI's sparse binary rewards)
-- `--value-loss-coef`: Value loss coefficient (default: **0.25**, tuned for stability)
 - `--clip-eps`: PPO clipping parameter (default: 0.2)
 - `--ppo-epochs`: Number of PPO update epochs per batch (default: 4)
-- `--batch-size`: Batch size for PPO updates (default: 256)
+- `--batch-size`: Batch size for PPO updates (default: 1280)
 - `--gae-lambda`: GAE lambda for advantage estimation (default: 0.99)
 - `--discount`: Reward discount factor (default: 0.99)
 
@@ -202,9 +204,10 @@ Toddler AI automatically detects and uses the best available device:
 - Automatically detected and used
 
 **Apple Silicon (MPS):**
-- Currently disabled due to PyTorch MPS limitations with certain operations
-- Training runs on CPU (still fast for these small models and MiniLM)
-- Will be enabled once PyTorch MPS support matures
+- ✅ Fully supported for RL training on M-series chips (M1/M2/M3/M4)
+- ~230 FPS for PPO training with unified_vit + MiniLM on M4
+- Automatically detected and used
+- IL training may still use CPU due to some operations
 
 **CPU:**
 - Works well for all training tasks
@@ -412,19 +415,21 @@ Without this, sparse rewards + reward scaling cause advantages to have std ~8.5 
 | Parameter | Old Default | New Default | Why Changed |
 |-----------|-------------|-------------|-------------|
 | `reward_scale` | 20.0 | **1.0** | Prevents value loss explosion (380 → 0.25) |
-| `value_loss_coef` | 0.5 | **0.25** | Balances policy/value learning |
+| `value_loss_coef` | 0.5 | **0.1** | Balances policy/value learning with pretrained models |
+| `lr` | 1e-4 | **5e-5** | Stability with pretrained MiniLM encoder |
+| `entropy_coef` | 0.01 | **0.05** | Maintains exploration, prevents premature convergence |
 
 **Why this matters:** With `reward_scale=20` and binary rewards [0, 1], returns become [0, 20]. If the value function predicts 0.5 for a return of 20, the squared error is `(20 - 0.5)² = 380.25`, which **dominates** the total loss and causes training instability.
 
 ### Performance Comparison
 
-| Metric | Before (20.0, 0.5) | After (1.0, 0.25) |
+| Metric | Before (old defaults) | After (new defaults) |
 |--------|-------------------|------------------|
 | **Value Loss** | 1.0 → 52.8 ⚠️ | 0.02 → 0.04 ✅ |
-| **Gradient Norm** | Up to 18.9 ⚠️ | 0.1 → 0.3 ✅ |
-| **Success Rate** | 0% → 75% → 0% ⚠️ | 24% → 46% ✅ |
-| **FPS** | ~200 | ~400 |
-| **Stability** | Volatile | Smooth convergence |
+| **Gradient Norm** | Up to 18.9 ⚠️ | 0.1 → 0.9 ✅ |
+| **Success Rate** | 12% → 40% (unstable) ⚠️ | 96% (stable) ✅ |
+| **FPS** | ~230 | ~230-250 |
+| **Stability** | Volatile, fluctuating | Smooth, monotonic improvement |
 
 ### When to Override Defaults
 
