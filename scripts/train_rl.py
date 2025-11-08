@@ -18,6 +18,7 @@ import subprocess
 import toddler_ai
 import toddler_ai.utils as utils
 from toddler_ai.algorithms import PPOAlgo
+from toddler_ai.algorithms.grpo import GRPOAlgo
 from toddler_ai.utils.arguments import ArgumentParser
 from toddler_ai.models.ac_model import ACModel
 from toddler_ai.utils.evaluate import batch_evaluate
@@ -28,7 +29,7 @@ from minigrid.wrappers import RGBImgPartialObsWrapper
 # Parse arguments
 parser = ArgumentParser()
 parser.add_argument("--algo", default='ppo',
-                    help="algorithm to use (default: ppo)")
+                    help="algorithm to use: ppo or grpo (default: ppo)")
 parser.add_argument("--discount", type=float, default=0.99,
                     help="discount factor (default: 0.99)")
 parser.add_argument("--reward-scale", type=float, default=1.0,
@@ -42,9 +43,18 @@ parser.add_argument("--max-grad-norm", type=float, default=0.5,
 parser.add_argument("--clip-eps", type=float, default=0.2,
                     help="clipping epsilon for PPO (default: 0.2)")
 parser.add_argument("--ppo-epochs", type=int, default=4,
-                    help="number of epochs for PPO (default: 4)")
+                    help="number of epochs for PPO/GRPO (default: 4)")
 parser.add_argument("--save-interval", type=int, default=50,
                     help="number of updates between two saves (default: 50, 0 means no saving)")
+
+# GRPO-specific arguments
+parser.add_argument("--grpo-group-size", type=int, default=4,
+                    help="GRPO: number of samples per group for relative advantage (default: 4)")
+parser.add_argument("--grpo-kl-coef", type=float, default=0.0,
+                    help="GRPO: KL divergence penalty coefficient (default: 0.0, typical: 0.01-0.1)")
+parser.add_argument("--grpo-use-clipping", type=lambda x: x.lower() == 'true', default=True,
+                    help="GRPO: whether to use PPO-style clipping (default: True)")
+
 args = parser.parse_args()
 
 if __name__ == '__main__':
@@ -148,14 +158,33 @@ if __name__ == '__main__':
     # Note: Algorithm decides device (may use CPU instead of MPS due to PyTorch limitations)
 
     reshape_reward = lambda _0, _1, reward, _2: args.reward_scale * reward
+    
     if args.algo == "ppo":
         algo = PPOAlgo(envs, acmodel, args.frames_per_proc, args.discount, args.lr, args.beta1, args.beta2,
                        args.gae_lambda,
                        args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
                        args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size, obss_preprocessor,
                        reshape_reward, env_seeds=env_seeds)
+    elif args.algo == "grpo":
+        logger.info(f"Using GRPO algorithm with:")
+        logger.info(f"  - Group size: {args.grpo_group_size}")
+        logger.info(f"  - KL coefficient: {args.grpo_kl_coef}")
+        logger.info(f"  - Use clipping: {args.grpo_use_clipping}")
+        
+        algo = GRPOAlgo(
+            envs, acmodel, args.frames_per_proc, args.discount, args.lr, args.beta1, args.beta2,
+            args.gae_lambda,
+            args.entropy_coef, args.value_loss_coef, args.max_grad_norm, args.recurrence,
+            args.optim_eps, args.clip_eps, args.ppo_epochs, args.batch_size,
+            group_size=args.grpo_group_size,
+            kl_coef=args.grpo_kl_coef,
+            use_clipping=args.grpo_use_clipping,
+            preprocess_obss=obss_preprocessor,
+            reshape_reward=reshape_reward,
+            env_seeds=env_seeds
+        )
     else:
-        raise ValueError("Incorrect algorithm name: {}".format(args.algo))
+        raise ValueError("Incorrect algorithm name: {}. Supported: ppo, grpo".format(args.algo))
 
     # Move model to the device chosen by the algorithm
     acmodel.to(algo.device)
@@ -189,15 +218,27 @@ if __name__ == '__main__':
               + ["success_rate"]
               + ["num_frames_" + stat for stat in ['mean', 'std', 'min', 'max']]
               + ["entropy", "value", "policy_loss", "value_loss", "loss", "grad_norm"])
+    
+    # Add KL divergence to header if using GRPO
+    if args.algo == "grpo":
+        header.append("kl_div")
 
     # Initialize wandb if requested
     if args.tb:
         try:
             import wandb
+            wandb_config = vars(args)
+            # Add GRPO-specific config if using GRPO
+            if args.algo == "grpo":
+                wandb_config.update({
+                    'grpo_group_size': args.grpo_group_size,
+                    'grpo_kl_coef': args.grpo_kl_coef,
+                    'grpo_use_clipping': args.grpo_use_clipping
+                })
             wandb.init(
                 project="toddler-ai",
                 name=args.model,
-                config=vars(args)
+                config=wandb_config
             )
         except ImportError:
             logger.warning("wandb not installed. Install with: uv sync --extra tracking")
@@ -268,10 +309,18 @@ if __name__ == '__main__':
                     *num_frames_per_episode.values(),
                     logs["entropy"], logs["value"], logs["policy_loss"], logs["value_loss"],
                     logs["loss"], logs["grad_norm"]]
+            
+            # Add KL divergence if using GRPO
+            if args.algo == "grpo":
+                data.append(logs.get("kl_div", 0.0))
 
             format_str = ("U {} | E {} | F {:06} | FPS {:04.0f} | D {} | R:xsmM {: .2f} {: .2f} {: .2f} {: .2f} | "
                           "S {:.2f} | F:xsmM {:.1f} {:.1f} {} {} | H {:.3f} | V {:.3f} | "
                           "pL {: .3f} | vL {:.3f} | L {:.3f} | gN {:.3f} | ")
+            
+            # Add KL to format string if using GRPO
+            if args.algo == "grpo":
+                format_str += "KL {:.3f} | "
 
             logger.info(format_str.format(*data))
             if args.tb:
