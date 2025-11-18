@@ -275,10 +275,10 @@ uv run python scripts/train_rl.py --env BabyAI-GoToRedBallGrey-v0 \
 - **Higher final performance:** Combines supervised learning stability with RL exploration
 - **Curriculum learning:** IL teaches basic competence, PPO optimizes for edge cases
 
-**Performance comparison (BabyAI-GoToRedBallGrey-v0):**
-- PPO from scratch: ~50K frames to 90% success
-- IL→PPO two-stage: ~30K total frames (10K IL + 20K PPO) to 90% success
-- **40% sample efficiency improvement**
+**Expected benefits:**
+- Significantly reduced sample complexity compared to PPO from scratch
+- More stable training with better initial policy
+- IL demonstrates ~90%+ validation accuracy on simple tasks with just 1000 expert demonstrations
 
 ### Progressive Training Curriculum
 
