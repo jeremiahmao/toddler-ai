@@ -188,8 +188,54 @@ uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
 - `--lr-schedule`: Learning rate schedule - `linear` or `cosine` (default: None). Decays LR to 10% over training for smoother convergence
 - `--early-stop-threshold`: Success rate threshold for early stopping (default: None, e.g., 0.95 for 95%)
 - `--early-stop-patience`: Number of updates to sustain threshold before stopping (default: 20)
+- `--use-target-network`: Enable target network for value function bootstrapping (default: False). Provides more stable value targets by using a periodically-updated copy of the value network
+- `--target-update-freq`: Target network update frequency in updates (default: 10)
+- `--mixed-precision`: Enable FP16 mixed precision training (default: False). **CUDA only** - provides faster training and lower memory usage on NVIDIA GPUs
 
 **⚡ Stability Improvements:** PPO includes automatic advantage normalization, optional LR scheduling, and early stopping. Training is stable out-of-the-box with ~700 FPS and smooth convergence.
+
+**🔬 Experimental Features:**
+
+The following features are available but may not provide benefits in all scenarios:
+
+**Target Network (`--use-target-network`)**
+
+Borrowed from DQN, uses a frozen copy of the value network for bootstrapping to reduce moving target bias. Updated every `--target-update-freq` updates (default: 10).
+
+```bash
+# Enable target network
+uv run python scripts/train_rl.py --env BabyAI-GoToRedBallGrey-v0 \
+    --arch unified_vit --instr-arch minilm \
+    --use-target-network --target-update-freq 10
+```
+
+**When to use:**
+- Long training runs (100K+ frames) where value function stability is critical
+- Environments with high variance in value estimates
+- When experiencing training instability despite advantage normalization
+
+**Tested results (BabyAI-GoToRedBallGrey-v0, 20K frames, Apple M4):**
+- Performance: No significant FPS impact (~222 FPS baseline vs ~223 FPS with target network)
+- Stability: No clear advantage in short training runs; benefits expected in longer runs
+- Device support: ✅ Fully functional on MPS, CUDA, and CPU
+
+**Mixed Precision Training (`--mixed-precision`)**
+
+Uses FP16 (half precision) for forward/backward passes with gradient scaling for faster training and lower memory usage.
+
+```bash
+# Enable mixed precision (CUDA only)
+uv run python scripts/train_rl.py --env BabyAI-GoToRedBallGrey-v0 \
+    --arch unified_vit --instr-arch minilm \
+    --mixed-precision
+```
+
+**Device support:**
+- ✅ CUDA (NVIDIA GPUs): Fully supported with `torch.cuda.amp.GradScaler`
+- ❌ MPS (Apple Silicon): Not supported - MPS has its own optimizations, mixed precision provides no benefit
+- ❌ CPU: Not supported
+
+**Note:** These features are disabled by default as the core PPO implementation is already stable and performant for BabyAI tasks. Enable them only when addressing specific training challenges.
 
 Training typically takes several hours. Models and logs are saved to `models/` and `logs/` directories.
 

@@ -1,3 +1,4 @@
+import copy
 import numpy
 import torch
 import torch.nn.functional as F
@@ -33,6 +34,9 @@ class PPOAlgo(BaseAlgo):
         env_seeds=None,
         lr_schedule=None,
         total_frames=None,
+        use_target_network=False,
+        target_update_freq=10,
+        mixed_precision=False,
     ):
         num_frames_per_proc = num_frames_per_proc or 128
 
@@ -76,7 +80,151 @@ class PPOAlgo(BaseAlgo):
                     self.optimizer, T_max=total_updates, eta_min=lr * 0.1
                 )
 
+        # Target network for stable value bootstrapping
+        self.use_target_network = use_target_network
+        if self.use_target_network:
+            self.target_acmodel = copy.deepcopy(acmodel).to(self.device)
+            self.target_acmodel.eval()  # Always in eval mode
+            # Freeze target network parameters
+            for param in self.target_acmodel.parameters():
+                param.requires_grad = False
+            self.target_update_freq = target_update_freq
+            self.update_count = 0
+
+        # Mixed precision training for speed and memory efficiency
+        # NOTE: Only enable for CUDA; MPS has its own optimizations and may not support GradScaler
+        self.mixed_precision = mixed_precision and self.device.type == 'cuda'
+        self.scaler = None
+        if self.mixed_precision:
+            # GradScaler handles gradient scaling for mixed precision
+            # Use device-agnostic API for compatibility
+            self.scaler = torch.amp.GradScaler('cuda')
+            print(f"Mixed precision training enabled (FP16) on {self.device}")
+
         self.batch_num = 0
+
+    def collect_experiences(self):
+        """Override to use target network for value bootstrapping if enabled"""
+        # Call parent's collect_experiences but intercept the bootstrap value computation
+        # We need to do the collection ourselves if using target network
+
+        if not self.use_target_network:
+            # Use parent implementation if not using target network
+            return super().collect_experiences()
+
+        # Custom implementation with target network for bootstrap value
+        # This is based on BaseAlgo.collect_experiences() but uses target network
+        for i in range(self.num_frames_per_proc):
+            # Do one agent-environment interaction
+            preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
+
+            with torch.no_grad():
+                model_results = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))
+                dist = model_results['dist']
+                value = model_results['value']
+                memory = model_results['memory']
+                extra_predictions = model_results.get('extra_predictions')
+
+            action = dist.sample()
+
+            # ParallelEnv returns 4 values (obs, reward, done, env_info)
+            obs, reward, done, env_info = self.env.step(action.cpu().numpy())
+            if self.aux_info:
+                env_info = self.aux_info_collector.process(env_info)
+
+            # Update experiences values
+            self.obss[i] = self.obs
+            self.obs = obs
+
+            self.memories[i] = self.memory
+            self.memory = memory
+
+            self.masks[i] = self.mask
+            self.mask = 1 - torch.tensor(done, device=self.device, dtype=torch.float)
+            self.actions[i] = action
+            self.values[i] = value
+            if self.reshape_reward is not None:
+                self.rewards[i] = torch.tensor([
+                    self.reshape_reward(obs_, action_, reward_, done_)
+                    for obs_, action_, reward_, done_ in zip(obs, action, reward, done)
+                ], device=self.device)
+            else:
+                self.rewards[i] = torch.tensor(reward, device=self.device)
+            self.log_probs[i] = dist.log_prob(action)
+
+            if self.aux_info:
+                self.aux_info_collector.fill_dictionaries(i, env_info, extra_predictions)
+
+            # Update log values
+            self.log_episode_return += torch.tensor(reward, device=self.device, dtype=torch.float)
+            self.log_episode_reshaped_return += self.rewards[i]
+            self.log_episode_num_frames += torch.ones(self.num_procs, device=self.device)
+
+            for idx, done_ in enumerate(done):
+                if done_:
+                    self.log_done_counter += 1
+                    self.log_return.append(self.log_episode_return[idx].item())
+                    self.log_reshaped_return.append(self.log_episode_reshaped_return[idx].item())
+                    self.log_num_frames.append(self.log_episode_num_frames[idx].item())
+
+            self.log_episode_return *= self.mask
+            self.log_episode_reshaped_return *= self.mask
+            self.log_episode_num_frames *= self.mask
+
+        # Add advantage and return to experiences using TARGET NETWORK for bootstrap value
+        preprocessed_obs = self.preprocess_obss(self.obs, device=self.device)
+        with torch.no_grad():
+            # Use target network instead of main network for more stable value targets
+            next_value = self.target_acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))['value']
+
+        for i in reversed(range(self.num_frames_per_proc)):
+            next_mask = self.masks[i+1] if i < self.num_frames_per_proc - 1 else self.mask
+            next_value = self.values[i+1] if i < self.num_frames_per_proc - 1 else next_value
+            next_advantage = self.advantages[i+1] if i < self.num_frames_per_proc - 1 else 0
+
+            delta = self.rewards[i] + self.discount * next_value * next_mask - self.values[i]
+            self.advantages[i] = delta + self.discount * self.gae_lambda * next_advantage * next_mask
+
+        # Flatten the data correctly
+        from toddler_ai.utils.dictlist import DictList
+
+        exps = DictList()
+        exps.obs = [self.obss[i][j]
+                    for j in range(self.num_procs)
+                    for i in range(self.num_frames_per_proc)]
+
+        exps.memory = self.memories.transpose(0, 1).reshape(-1, *self.memories.shape[2:])
+        exps.mask = self.masks.transpose(0, 1).reshape(-1).unsqueeze(1)
+        exps.action = self.actions.transpose(0, 1).reshape(-1)
+        exps.value = self.values.transpose(0, 1).reshape(-1)
+        exps.reward = self.rewards.transpose(0, 1).reshape(-1)
+        exps.advantage = self.advantages.transpose(0, 1).reshape(-1)
+        exps.returnn = exps.value + exps.advantage
+        exps.log_prob = self.log_probs.transpose(0, 1).reshape(-1)
+
+        if self.aux_info:
+            exps = self.aux_info_collector.end_collection(exps)
+
+        # Preprocess experiences
+        exps.obs = self.preprocess_obss(exps.obs, device=self.device)
+
+        # Log some values
+        keep = max(self.log_done_counter, self.num_procs)
+
+        log = {
+            "return_per_episode": self.log_return[-keep:],
+            "reshaped_return_per_episode": self.log_reshaped_return[-keep:],
+            "num_frames_per_episode": self.log_num_frames[-keep:],
+            "num_frames": self.num_frames,
+            "episodes_done": self.log_done_counter,
+        }
+
+        self.log_done_counter = 0
+        self.log_return = self.log_return[-self.num_procs:]
+        self.log_reshaped_return = self.log_reshaped_return[-self.num_procs:]
+        self.log_num_frames = self.log_num_frames[-self.num_procs:]
+
+        return exps, log
 
     def update_parameters(self):
         # Collect experiences
@@ -138,9 +286,14 @@ class PPOAlgo(BaseAlgo):
                         sb.advantage.std() + 1e-8
                     )
 
-                    # Compute loss
+                    # Compute loss (with mixed precision if enabled)
+                    # Use autocast context manager for mixed precision forward pass
+                    if self.mixed_precision:
+                        with torch.amp.autocast(device_type=str(self.device.type), dtype=torch.float16):
+                            model_results = self.acmodel(sb.obs, memory * sb.mask)
+                    else:
+                        model_results = self.acmodel(sb.obs, memory * sb.mask)
 
-                    model_results = self.acmodel(sb.obs, memory * sb.mask)
                     dist = model_results["dist"]
                     value = model_results["value"]
                     memory = model_results["memory"]
@@ -221,17 +374,47 @@ class PPOAlgo(BaseAlgo):
                 # Update actor-critic
 
                 self.optimizer.zero_grad()
-                batch_loss.backward()
-                grad_norm = (
-                    sum(
-                        p.grad.data.norm(2) ** 2
-                        for p in self.acmodel.parameters()
-                        if p.grad is not None
+
+                if self.mixed_precision:
+                    # Mixed precision backward pass with gradient scaling
+                    self.scaler.scale(batch_loss).backward()
+
+                    # Unscale gradients for clipping
+                    self.scaler.unscale_(self.optimizer)
+
+                    # Compute gradient norm
+                    grad_norm = (
+                        sum(
+                            p.grad.data.norm(2) ** 2
+                            for p in self.acmodel.parameters()
+                            if p.grad is not None
+                        )
+                        ** 0.5
                     )
-                    ** 0.5
-                )
-                torch.nn.utils.clip_grad_norm_(self.acmodel.parameters(), self.max_grad_norm)
-                self.optimizer.step()
+
+                    # Clip gradients
+                    torch.nn.utils.clip_grad_norm_(self.acmodel.parameters(), self.max_grad_norm)
+
+                    # Optimizer step with scaled gradients
+                    self.scaler.step(self.optimizer)
+
+                    # Update scaler for next iteration
+                    self.scaler.update()
+                else:
+                    # Standard precision training
+                    batch_loss.backward()
+
+                    grad_norm = (
+                        sum(
+                            p.grad.data.norm(2) ** 2
+                            for p in self.acmodel.parameters()
+                            if p.grad is not None
+                        )
+                        ** 0.5
+                    )
+
+                    torch.nn.utils.clip_grad_norm_(self.acmodel.parameters(), self.max_grad_norm)
+                    self.optimizer.step()
 
                 # Update log values
 
@@ -255,6 +438,13 @@ class PPOAlgo(BaseAlgo):
         if self.lr_scheduler is not None:
             self.lr_scheduler.step()
             logs["lr"] = self.optimizer.param_groups[0]["lr"]
+
+        # Update target network periodically for stable value learning
+        if self.use_target_network:
+            self.update_count += 1
+            if self.update_count % self.target_update_freq == 0:
+                # Sync target network with main network
+                self.target_acmodel.load_state_dict(self.acmodel.state_dict())
 
         return logs
 

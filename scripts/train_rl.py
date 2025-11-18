@@ -79,6 +79,24 @@ parser.add_argument(
     default=20,
     help="early stopping patience in updates (default: 20)",
 )
+parser.add_argument(
+    "--use-target-network",
+    action="store_true",
+    default=False,
+    help="use target network for value function bootstrapping (default: False)",
+)
+parser.add_argument(
+    "--target-update-freq",
+    type=int,
+    default=10,
+    help="target network update frequency in updates (default: 10)",
+)
+parser.add_argument(
+    "--mixed-precision",
+    action="store_true",
+    default=False,
+    help="enable mixed precision training (FP16) for faster training and lower memory (default: False)",
+)
 args = parser.parse_args()
 
 if __name__ == "__main__":
@@ -216,6 +234,9 @@ if __name__ == "__main__":
             env_seeds=env_seeds,
             lr_schedule=args.lr_schedule,
             total_frames=args.frames,
+            use_target_network=args.use_target_network,
+            target_update_freq=args.target_update_freq,
+            mixed_precision=args.mixed_precision,
         )
     else:
         raise ValueError(f"Incorrect algorithm name: {args.algo}")
