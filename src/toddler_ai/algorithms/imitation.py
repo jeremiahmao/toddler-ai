@@ -403,9 +403,11 @@ class ImitationLearning(object):
 
         preprocessed_first_obs = self.obss_preprocessor(obss[inds], device=self.device)
         # Get instruction embedding based on model type
+        # Pre-compute embeddings once and reuse for all timesteps (optimization)
         if self.args.arch == 'unified_vit':
-            # UnifiedViTACModel handles minilm embedding projection internally
-            instr_embedding = preprocessed_first_obs.minilm_emb if hasattr(preprocessed_first_obs, 'minilm_emb') else None
+            # For unified_vit, we don't pass instr_embedding - let the model extract it from obs
+            # This ensures the projection happens inside the model with proper gradient flow
+            instr_embedding = None
         elif self.args.instr_arch == 'minilm':
             instr_embedding = self.acmodel._get_instr_embedding(None, minilm_embeddings=preprocessed_first_obs.minilm_emb)
         else:
@@ -419,9 +421,10 @@ class ImitationLearning(object):
             preprocessed_obs = self.obss_preprocessor(obs, device=self.device)
             with torch.no_grad():
                 # taking the memory till len(inds), as demos beyond that have already finished
+                instr_emb_slice = instr_embedding[:len(inds)] if instr_embedding is not None else None
                 new_memory = self.acmodel(
                     preprocessed_obs,
-                    memory[:len(inds), :], instr_embedding[:len(inds)])['memory']
+                    memory[:len(inds), :], instr_emb_slice)['memory']
 
             memories[inds, :] = memory[:len(inds), :]
             memory[:len(inds), :] = new_memory
@@ -448,9 +451,10 @@ class ImitationLearning(object):
             preprocessed_obs = self.obss_preprocessor(obs, device=self.device)
             action_step = action_true[indexes]
             mask_step = mask[indexes]
+            instr_emb_batch = instr_embedding[episode_ids[indexes]] if instr_embedding is not None else None
             model_results = self.acmodel(
                 preprocessed_obs, memory * mask_step,
-                instr_embedding[episode_ids[indexes]])
+                instr_emb_batch)
             dist = model_results['dist']
             memory = model_results['memory']
 

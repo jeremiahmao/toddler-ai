@@ -248,12 +248,12 @@ Train on expert demonstrations from the bot to initialize the policy with strong
 ```bash
 # Generate expert demonstrations using the bot
 uv run python scripts/make_demos.py --env BabyAI-GoToRedBallGrey-v0 \
-    --episodes 1000 --valid-episodes 512
+    --episodes 1000 --valid-episodes 512 --demos goto_redball_grey
 
 # Train with IL to learn from demonstrations
 uv run python scripts/train_il.py --env BabyAI-GoToRedBallGrey-v0 \
     --arch unified_vit --instr-arch minilm \
-    --demos-origin agent --episodes 1000 \
+    --demos goto_redball_grey --demos-origin agent --episodes 1000 \
     --model goto_redball_il --epochs 100
 ```
 

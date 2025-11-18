@@ -297,7 +297,12 @@ class UnifiedViTACModel(nn.Module):
             else:
                 raise ValueError("No instruction embedding provided")
         else:
-            goal_embedding = instr_embedding
+            # instr_embedding was provided - check if it needs projection
+            # If it's 384-dim (raw MiniLM), project it to embed_dim
+            if instr_embedding.size(-1) == 384 and self.minilm_projection is not None:
+                goal_embedding = self.minilm_projection(instr_embedding)  # [B, embed_dim]
+            else:
+                goal_embedding = instr_embedding
 
         goal_token = goal_embedding.unsqueeze(1)  # [B, 1, embed_dim]
 
