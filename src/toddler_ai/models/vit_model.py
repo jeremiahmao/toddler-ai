@@ -1,13 +1,21 @@
 """
 Vision Transformer (ViT) based Actor-Critic model for BabyAI.
 
-Modern architecture using:
+This is the BASELINE architecture - smaller and faster than UnifiedViTACModel.
+
+Architecture (486K params):
 - ViT for vision encoding
 - Self-attention for vision reasoning
 - Cross-attention for vision-language grounding
 - MiniLM for language understanding
+- LSTM memory (optional)
 
-Replaces the FiLM-based CNN architecture with pure attention.
+Use this for:
+- Quick experiments and prototyping
+- Resource-constrained environments
+- Baseline comparisons
+
+For best performance, use UnifiedViTACModel (8.4M params) instead.
 """
 
 import torch
@@ -245,7 +253,7 @@ class ViTACModel(nn.Module):
         # Stage 0: MiniLM projection (384-dim → embed_dim)
         # Only needed when using MiniLM language encoder
         if "minilm_emb" in obs_space:
-            from toddler_ai.models.ac_model import MiniLMProjection
+            from toddler_ai.models.common import MiniLMProjection
             self.minilm_projection = MiniLMProjection(instr_dim=embed_dim, minilm_dim=384)
         else:
             self.minilm_projection = None

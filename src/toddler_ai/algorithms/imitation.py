@@ -9,7 +9,6 @@ import torch
 from toddler_ai.utils.evaluate import batch_evaluate
 import toddler_ai.utils as utils
 from toddler_ai.utils.dictlist import DictList
-from toddler_ai.models.ac_model import ACModel
 import multiprocessing
 import os
 import json
@@ -149,7 +148,7 @@ class ImitationLearning(object):
                 self.acmodel = utils.load_model(args.pretrained_model, raise_not_found=True)
             else:
                 logger.info('Creating new model')
-                # Use ViT model if arch='vit', otherwise use FiLM-based model
+                # Architecture selection
                 if self.args.arch == 'vit':
                     from toddler_ai.models.vit_model import ViTACModel
                     logger.info('Using Vision Transformer (ViT) architecture')
@@ -166,11 +165,24 @@ class ImitationLearning(object):
                         cross_attn_heads=getattr(args, 'cross_attn_heads', 1),
                         dropout=getattr(args, 'dropout', 0.1)
                     )
+                elif self.args.arch == 'unified_vit':
+                    from toddler_ai.models.unified_vit_model import UnifiedViTACModel
+                    logger.info('Using Unified Concept Space ViT architecture')
+                    self.acmodel = UnifiedViTACModel(
+                        obs_space=self.obss_preprocessor.obs_space,
+                        action_space=action_space,
+                        image_size=7,  # BabyAI grid size
+                        patch_size=1,  # Each cell is a patch
+                        embed_dim=getattr(args, 'unified_embed_dim', 256),  # 256-dim unified concept space
+                        use_memory=not self.args.no_mem,
+                        attn_depth=getattr(args, 'attn_depth', 2),
+                        attn_heads=getattr(args, 'attn_heads', 4),
+                        dropout=getattr(args, 'dropout', 0.1),
+                        history_length=getattr(args, 'history_length', 10),
+                        vision_pred_coef=getattr(args, 'vision_pred_coef', 0.01)
+                    )
                 else:
-                    self.acmodel = ACModel(self.obss_preprocessor.obs_space, action_space,
-                                           args.image_dim, args.memory_dim, args.instr_dim,
-                                           not self.args.no_instr, self.args.instr_arch,
-                                           not self.args.no_mem, self.args.arch)
+                    raise ValueError(f"Unsupported architecture: {self.args.arch}. Use 'vit' or 'unified_vit'.")
         utils.save_model(self.acmodel, args.model)
 
         self.acmodel.train()
@@ -184,8 +196,8 @@ class ImitationLearning(object):
         param_groups = []
 
         # Collect parameters by component for differential learning rates
-        if self.args.arch == 'vit' and self.args.instr_arch == 'minilm':
-            logger.info('  Setting up differential learning rates for ViT + MiniLM architecture')
+        if (self.args.arch in ['vit', 'unified_vit']) and self.args.instr_arch == 'minilm':
+            logger.info(f'  Setting up differential learning rates for {self.args.arch} + MiniLM architecture')
 
             # 1. MiniLM encoder (if not frozen) - HIGH INERTIA
             if hasattr(self.obss_preprocessor, 'minilm_encoder') and not self.obss_preprocessor.freeze_encoder:
@@ -202,32 +214,48 @@ class ImitationLearning(object):
                 })
                 logger.info(f'    - MiniLM: {sum(p.numel() for p in encoder_params if p.requires_grad):,} params @ LR={minilm_lr:.2e}, wd={minilm_weight_decay} (HIGH INERTIA)')
 
-            # 2. ViT components - MEDIUM INERTIA
-            vit_lr_multiplier = getattr(self.args, 'vit_lr_multiplier', 0.1)  # 10x smaller
-            vit_weight_decay = getattr(self.args, 'vit_weight_decay', 0.01)  # light L2
-            vit_lr = self.args.lr * vit_lr_multiplier
+            # 2. Model components (architecture-specific) - MEDIUM INERTIA
+            model_lr_multiplier = getattr(self.args, 'vit_lr_multiplier', 0.1)  # 10x smaller
+            model_weight_decay = getattr(self.args, 'vit_weight_decay', 0.01)  # light L2
+            model_lr = self.args.lr * model_lr_multiplier
 
-            vit_params = []
+            model_params = []
+            # Common components
             if hasattr(self.acmodel, 'patch_embed'):
-                vit_params.extend(list(self.acmodel.patch_embed.parameters()))
-            if hasattr(self.acmodel, 'vision_self_attn'):
-                for layer in self.acmodel.vision_self_attn:
-                    vit_params.extend(list(layer.parameters()))
-            if hasattr(self.acmodel, 'cross_attn'):
-                vit_params.extend(list(self.acmodel.cross_attn.parameters()))
-
-            if vit_params:
-                param_groups.append({
-                    'params': vit_params,
-                    'lr': vit_lr,
-                    'weight_decay': vit_weight_decay
-                })
-                logger.info(f'    - ViT (patch+self-attn+cross-attn): {sum(p.numel() for p in vit_params if p.requires_grad):,} params @ LR={vit_lr:.2e}, wd={vit_weight_decay} (MEDIUM INERTIA)')
-
-            # 3. Rest of model (projection, pooling, memory, actor/critic) - FREE
-            rest_params = []
+                model_params.extend(list(self.acmodel.patch_embed.parameters()))
             if hasattr(self.acmodel, 'minilm_projection') and self.acmodel.minilm_projection is not None:
-                rest_params.extend(list(self.acmodel.minilm_projection.parameters()))
+                model_params.extend(list(self.acmodel.minilm_projection.parameters()))
+
+            # ViT-specific components
+            if self.args.arch == 'vit':
+                if hasattr(self.acmodel, 'vision_self_attn'):
+                    for layer in self.acmodel.vision_self_attn:
+                        model_params.extend(list(layer.parameters()))
+                if hasattr(self.acmodel, 'cross_attn'):
+                    model_params.extend(list(self.acmodel.cross_attn.parameters()))
+
+            # Unified ViT-specific components
+            elif self.args.arch == 'unified_vit':
+                if hasattr(self.acmodel, 'action_embeddings'):
+                    model_params.extend(list(self.acmodel.action_embeddings.parameters()))
+                if hasattr(self.acmodel, 'temporal_pos_embeddings'):
+                    model_params.append(self.acmodel.temporal_pos_embeddings)
+                if hasattr(self.acmodel, 'context_attention'):
+                    for layer in self.acmodel.context_attention:
+                        model_params.extend(list(layer.parameters()))
+                if hasattr(self.acmodel, 'vision_predictor'):
+                    model_params.extend(list(self.acmodel.vision_predictor.parameters()))
+
+            if model_params:
+                param_groups.append({
+                    'params': model_params,
+                    'lr': model_lr,
+                    'weight_decay': model_weight_decay
+                })
+                logger.info(f'    - Model components: {sum(p.numel() for p in model_params if p.requires_grad):,} params @ LR={model_lr:.2e}, wd={model_weight_decay} (MEDIUM INERTIA)')
+
+            # 3. Rest of model (pooling, memory, actor/critic) - FREE
+            rest_params = []
             if hasattr(self.acmodel, 'pool'):
                 rest_params.extend(list(self.acmodel.pool.parameters()))
             if hasattr(self.acmodel, 'memory_rnn'):
@@ -240,7 +268,7 @@ class ImitationLearning(object):
                 'lr': self.args.lr,
                 'weight_decay': 0.0
             })
-            logger.info(f'    - Rest (projection+pool+memory+actor+critic): {sum(p.numel() for p in rest_params if p.requires_grad):,} params @ LR={self.args.lr:.2e}, wd=0.0 (TRAINS FREELY)')
+            logger.info(f'    - Rest (pool+memory+actor+critic): {sum(p.numel() for p in rest_params if p.requires_grad):,} params @ LR={self.args.lr:.2e}, wd=0.0 (TRAINS FREELY)')
             logger.info(f'    - Total trainable: {sum(p.numel() for g in param_groups for p in g["params"] if p.requires_grad):,} params')
 
             self.optimizer = torch.optim.Adam(param_groups, eps=self.args.optim_eps)
@@ -375,7 +403,10 @@ class ImitationLearning(object):
 
         preprocessed_first_obs = self.obss_preprocessor(obss[inds], device=self.device)
         # Get instruction embedding based on model type
-        if self.args.instr_arch == 'minilm':
+        if self.args.arch == 'unified_vit':
+            # UnifiedViTACModel handles minilm embedding projection internally
+            instr_embedding = preprocessed_first_obs.minilm_emb if hasattr(preprocessed_first_obs, 'minilm_emb') else None
+        elif self.args.instr_arch == 'minilm':
             instr_embedding = self.acmodel._get_instr_embedding(None, minilm_embeddings=preprocessed_first_obs.minilm_emb)
         else:
             instr_embedding = self.acmodel._get_instr_embedding(preprocessed_first_obs.instr)

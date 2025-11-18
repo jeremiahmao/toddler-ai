@@ -3,7 +3,6 @@ import torch
 import numpy as np
 from .. import utils
 from minigrid.utils.baby_ai_bot import BabyAIBot
-from toddler_ai.models.ac_model import ACModel
 from random import Random
 
 
