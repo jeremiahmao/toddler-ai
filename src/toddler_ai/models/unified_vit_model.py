@@ -171,7 +171,7 @@ class UnifiedViTACModel(nn.Module):
         attn_depth=2,  # Number of attention layers
         attn_heads=4,  # Number of attention heads
         dropout=0.1,
-        history_length=10,  # Number of past actions to remember
+        history_length=30,  # Number of past actions to remember (sized for progressive curriculum)
         vision_pred_coef=0.01  # Coefficient for vision prediction loss (supplemental, weak)
     ):
         super().__init__()
