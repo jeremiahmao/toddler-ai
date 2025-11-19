@@ -199,11 +199,11 @@ class ImitationLearning(object):
         if (self.args.arch in ['vit', 'unified_vit']) and self.args.instr_arch == 'minilm':
             logger.info(f'  Setting up differential learning rates for {self.args.arch} + MiniLM architecture')
 
-            # 1. MiniLM encoder (if not frozen) - HIGH INERTIA
+            # 1. MiniLM encoder (if not frozen) - MODERATE INERTIA
             if hasattr(self.obss_preprocessor, 'minilm_encoder') and not self.obss_preprocessor.freeze_encoder:
                 self.obss_preprocessor.minilm_encoder.to(self.device)
-                minilm_lr_multiplier = getattr(self.args, 'minilm_lr_multiplier', 0.01)  # 100x smaller
-                minilm_weight_decay = getattr(self.args, 'minilm_weight_decay', 0.1)  # strong L2
+                minilm_lr_multiplier = getattr(self.args, 'minilm_lr_multiplier', 0.1)  # 10x smaller (was 100x)
+                minilm_weight_decay = getattr(self.args, 'minilm_weight_decay', 0.01)  # lighter L2
                 minilm_lr = self.args.lr * minilm_lr_multiplier
 
                 encoder_params = list(self.obss_preprocessor.minilm_encoder.parameters())
@@ -212,10 +212,10 @@ class ImitationLearning(object):
                     'lr': minilm_lr,
                     'weight_decay': minilm_weight_decay
                 })
-                logger.info(f'    - MiniLM: {sum(p.numel() for p in encoder_params if p.requires_grad):,} params @ LR={minilm_lr:.2e}, wd={minilm_weight_decay} (HIGH INERTIA)')
+                logger.info(f'    - MiniLM: {sum(p.numel() for p in encoder_params if p.requires_grad):,} params @ LR={minilm_lr:.2e}, wd={minilm_weight_decay} (MODERATE INERTIA)')
 
-            # 2. Model components (architecture-specific) - MEDIUM INERTIA
-            model_lr_multiplier = getattr(self.args, 'vit_lr_multiplier', 0.1)  # 10x smaller
+            # 2. Model components (architecture-specific) - LIGHT INERTIA
+            model_lr_multiplier = getattr(self.args, 'vit_lr_multiplier', 0.3)  # 3x smaller (was 10x)
             model_weight_decay = getattr(self.args, 'vit_weight_decay', 0.01)  # light L2
             model_lr = self.args.lr * model_lr_multiplier
 
@@ -427,7 +427,20 @@ class ImitationLearning(object):
                     memory[:len(inds), :], instr_emb_slice)['memory']
 
             memories[inds, :] = memory[:len(inds), :]
-            memory[:len(inds), :] = new_memory
+
+            # For unified_vit, memory contains action history indices
+            # Update memory by shifting left and adding the action taken at this step
+            if self.args.arch == 'unified_vit' and self.acmodel.memory_size > 0:
+                # Get actions at current indices
+                actions_at_inds = action_true[inds]
+                # Shift memory left and add new action
+                updated_memory = torch.zeros_like(memory[:len(inds), :])
+                updated_memory[:, :-1] = memory[:len(inds), 1:]  # Shift left
+                updated_memory[:, -1] = actions_at_inds  # Add new action
+                memory[:len(inds), :] = updated_memory
+            else:
+                memory[:len(inds), :] = new_memory
+
             episode_ids[inds] = range(len(inds))
 
             # Updating inds, by removing those indices corresponding to which the demonstrations have finished
@@ -456,7 +469,16 @@ class ImitationLearning(object):
                 preprocessed_obs, memory * mask_step,
                 instr_emb_batch)
             dist = model_results['dist']
-            memory = model_results['memory']
+
+            # For unified_vit, update memory with actual action taken (from demos)
+            if self.args.arch == 'unified_vit' and self.acmodel.memory_size > 0:
+                # Shift memory left and add the true action
+                new_memory = torch.zeros_like(memory)
+                new_memory[:, :-1] = memory[:, 1:]  # Shift left
+                new_memory[:, -1] = action_step  # Add true action from demo
+                memory = new_memory
+            else:
+                memory = model_results['memory']
 
             entropy = dist.entropy().mean()
             policy_loss = -dist.log_prob(action_step).mean()

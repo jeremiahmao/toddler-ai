@@ -189,7 +189,9 @@ class PPOAlgo(BaseAlgo):
         from toddler_ai.utils.dictlist import DictList
 
         exps = DictList()
-        exps.obs = [self.obss[i][j]
+        # Store raw observations for re-encoding in each epoch
+        # This allows backprop through bert-tiny during PPO
+        exps.raw_obs = [self.obss[i][j]
                     for j in range(self.num_procs)
                     for i in range(self.num_frames_per_proc)]
 
@@ -205,8 +207,10 @@ class PPOAlgo(BaseAlgo):
         if self.aux_info:
             exps = self.aux_info_collector.end_collection(exps)
 
-        # Preprocess experiences
-        exps.obs = self.preprocess_obss(exps.obs, device=self.device)
+        # Note: We no longer preprocess here. Instead, we preprocess fresh
+        # for each epoch to allow backprop through bert-tiny.
+        # Set exps.obs to None to indicate it needs preprocessing
+        exps.obs = None
 
         # Log some values
         keep = max(self.log_done_counter, self.num_procs)
@@ -264,6 +268,17 @@ class PPOAlgo(BaseAlgo):
             for inds in self._get_batches_starting_indexes():
                 # inds is a numpy array of indices that correspond to the beginning of a sub-batch
                 # there are as many inds as there are batches
+
+                # Preprocess observations fresh for this batch
+                # This creates a new computation graph for bert-tiny, allowing backprop
+                # We need to preprocess all observations that will be used in this batch
+                # (inds, inds+1, ..., inds+recurrence-1)
+                batch_indices = []
+                for i in range(self.recurrence):
+                    batch_indices.extend((inds + i).tolist())
+                batch_raw_obs = [exps.raw_obs[idx] for idx in batch_indices]
+                batch_obs = self.preprocess_obss(batch_raw_obs, device=self.device)
+
                 # Initialize batch values
 
                 batch_entropy = 0
@@ -280,6 +295,13 @@ class PPOAlgo(BaseAlgo):
                     # Create a sub-batch of experience
                     sb = exps[inds + i]
 
+                    # Get the batch-local observations for this sub-batch
+                    # batch_obs is organized as: [all indices for i=0, all indices for i=1, ...]
+                    # So for sub-batch i, we need indices [i*len(inds) : (i+1)*len(inds)]
+                    sb_obs_start = i * len(inds)
+                    sb_obs_end = (i + 1) * len(inds)
+                    sb_obs = batch_obs[sb_obs_start:sb_obs_end]
+
                     # Normalize advantages for this sub-batch (critical for stability)
                     # This prevents exploding gradients with high reward scales
                     sb_advantage_normalized = (sb.advantage - sb.advantage.mean()) / (
@@ -290,9 +312,9 @@ class PPOAlgo(BaseAlgo):
                     # Use autocast context manager for mixed precision forward pass
                     if self.mixed_precision:
                         with torch.amp.autocast(device_type=str(self.device.type), dtype=torch.float16):
-                            model_results = self.acmodel(sb.obs, memory * sb.mask)
+                            model_results = self.acmodel(sb_obs, memory * sb.mask)
                     else:
-                        model_results = self.acmodel(sb.obs, memory * sb.mask)
+                        model_results = self.acmodel(sb_obs, memory * sb.mask)
 
                     dist = model_results["dist"]
                     value = model_results["value"]
@@ -333,11 +355,15 @@ class PPOAlgo(BaseAlgo):
                         # For last timestep in recurrence, we don't have next obs in this sub-batch
                         if i < self.recurrence - 1:
                             sb_next = exps[inds + i + 1]
+                            # Get the batch-local observations for the next sub-batch
+                            sb_next_obs_start = (i + 1) * len(inds)
+                            sb_next_obs_end = (i + 2) * len(inds)
+                            sb_next_obs = batch_obs[sb_next_obs_start:sb_next_obs_end]
                             # Compute target vision patches from next observation
                             with torch.no_grad():
                                 # Run next observation through model to get target patches
                                 next_model_results = self.acmodel(
-                                    sb_next.obs, memory * sb_next.mask
+                                    sb_next_obs, memory * sb_next.mask
                                 )
                                 vision_target = next_model_results["extra_predictions"][
                                     "current_vision"
@@ -356,6 +382,7 @@ class PPOAlgo(BaseAlgo):
                     batch_value += value.mean().item()
                     batch_policy_loss += policy_loss.item()
                     batch_value_loss += value_loss.item()
+
                     batch_loss += loss
 
                     # Update memories for next epoch
@@ -416,6 +443,9 @@ class PPOAlgo(BaseAlgo):
                     torch.nn.utils.clip_grad_norm_(self.acmodel.parameters(), self.max_grad_norm)
                     self.optimizer.step()
 
+                # Convert batch_loss to item for logging
+                batch_loss = batch_loss.item()
+
                 # Update log values
 
                 log_entropies.append(batch_entropy)
@@ -423,7 +453,7 @@ class PPOAlgo(BaseAlgo):
                 log_policy_losses.append(batch_policy_loss)
                 log_value_losses.append(batch_value_loss)
                 log_grad_norms.append(grad_norm.item())
-                log_losses.append(batch_loss.item())
+                log_losses.append(batch_loss)
 
         # Log some values
 

@@ -1,1054 +1,159 @@
 # Toddler AI
 
-A research platform for grounded language learning with unified concept space architectures, built on Minigrid environments.
+A research platform for grounded language learning with unified concept space architectures, built on BabyAI/Minigrid environments.
 
 ## Overview
 
 Toddler AI is a cognitive architecture research platform featuring:
 
-- **Unified Concept Space ViT** - Novel architecture where vision, language, and actions share a 256-dim embedding space with predictive processing
-- **Vision Transformer Models** - Attention-based architectures for vision-language grounding
+- **Unified Concept Space ViT** - Novel architecture where vision, language, and action history share a 256-dim embedding space
 - **BabyAI Environments** from [Minigrid](https://github.com/Farama-Foundation/Minigrid) - Grid-world tasks with natural language instructions
-- **Modern RL Training** - PPO with sparse reward handling, advantage normalization, and auxiliary prediction losses
-- **Modern Tooling** - Python 3.10+, PyTorch 2.0+, Gymnasium, MiniLM language encoder, Weights & Biases
+- **bert-tiny Language Encoder** - Lightweight 4.4M param encoder with full gradient flow
+- **Modern Tooling** - Python 3.10+, PyTorch 2.0+, Gymnasium, uv package manager
 
-## What's Included
+## Architecture
 
-This repository contains a curated, organized selection of production-ready code:
+### Unified Concept Space ViT (12.7M params)
 
-### Environments
-- ✅ BabyAI grid-world tasks from Minigrid (7 categories: GoTo, Open, Pickup, PutNext, Synth, Unlock, Other)
-- ✅ Environment wrappers for observation/action space customization
-- ✅ Level generation and verification utilities
+```
+Goal (bert-tiny) → [256] ─┐
+Actions (history) → [10, 256] ─┼─→ Self-Attention [~60, 256] → Pool → [256]
+Vision (patches) → [49, 256] ─┘                                        ↓
+                                                              Actor + Critic MLPs
+```
 
-### Models & Algorithms
-- ✅ **Unified Concept Space ViT** - Cognitive architecture with predictive processing (8.4M params, 256-dim unified space) (RECOMMENDED)
-- ✅ **Vision Transformer (ViT)** - Baseline attention-based architecture (486K params, faster for quick experiments)
-- ✅ **MiniLM Integration** - Pretrained sentence transformer (384-dim, 22.7M params, frozen encoder + trainable projection)
-- ✅ **PPO Algorithm** - Proximal Policy Optimization with advantage normalization and auxiliary prediction losses for sparse rewards
-- ✅ **Imitation Learning** - Behavioral cloning for training from demonstrations
-- ✅ **Rule-based Bot** - Expert agent for generating demonstrations
+**Parameter Breakdown:**
+- bert-tiny encoder: 4.4M params (128-dim output)
+- Projection layer: 33K params (128 → 256)
+- Patch embedding: 768 params (7×7 → 49 patches × 256-dim)
+- Action embeddings: 1.8K params (7 actions × 256-dim)
+- Self-attention: 2.6M params (2 layers, 4 heads)
+- Pool layer: 65K params
+- Actor head: 33K params (256 → 128 → 7)
+- Critic head: 33K params (256 → 128 → 1)
+- Vision predictor: 3.2M params (supplemental, 0.01 coefficient)
 
-### Training & Evaluation
-- ✅ 6 ready-to-use scripts: train IL/RL, generate demos, evaluate, visualize
-- ✅ Weights & Biases (wandb) integration for experiment tracking
-- ✅ Multi-environment training support
-- ✅ Success rate tracking and data efficiency metrics
-- ✅ Automatic GPU acceleration (CUDA on NVIDIA, CPU fallback for Apple Silicon)
+**Key Design:**
+- All modalities encoded in shared 256-dim concept space
+- Action history as memory (last 10 actions with temporal encodings)
+- Memory updated externally with shift-left-and-add pattern
+- Specialized MLP heads for action selection (not attention-based)
 
-### Development Tools
-- ✅ Modern `pyproject.toml` with `uv` support (replaces old `setup.py`)
-- ✅ Pre-commit hooks (black, isort, flake8)
-- ✅ pytest test suite
-- ✅ Type checking with pyright
+### Training
 
-## Modern Stack
-
-**Dependencies:**
-- Python 3.10+
-- PyTorch 2.0+
-- Gymnasium 0.29+
-- sentence-transformers (MiniLM)
-- Weights & Biases (wandb) for tracking
-- Automatic GPU acceleration (CUDA on NVIDIA, MPS on Apple Silicon, CPU fallback)
-
-**Architecture Innovations:**
-- Unified concept space (256-dim) for vision, language, and action history
-- Predictive processing with vision prediction (supplemental, weak coefficient)
-- Action embeddings for encoding action history into unified concept space
-- Specialized MLP output heads for action selection and value estimation
-- Advantage normalization for stable sparse reward learning
+**Differential Learning Rates:**
+- bert-tiny: 5e-6 (moderate inertia, 4.4M params)
+- Model components: 1.5e-5 (medium inertia, 8.2M params)
+- Task-specific heads: 5e-5 (trains freely, 133K params)
 
 ## Installation
 
-### Using uv (Recommended)
-
 ```bash
-# Install uv if you haven't already
+# Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Clone the repository
+# Clone and install
 git clone https://github.com/jeremiahmao/toddler-ai.git
 cd toddler-ai
-
-# Install all dependencies (includes MiniLM)
 uv sync
-
-# Optional: Install wandb for experiment tracking
-uv sync --extra tracking
-```
-
-### Using pip
-
-```bash
-git clone https://github.com/jeremiahmao/toddler-ai.git
-cd toddler-ai
-pip install -e .  # Includes MiniLM
-
-# Optional: Install wandb for experiment tracking
-pip install -e ".[tracking]"
 ```
 
 ## Quick Start
 
-**Available architectures:**
-- **unified_vit** (RECOMMENDED): Unified concept space with predictive processing (8.4M params)
-- **vit** (baseline): Vision Transformer with cross-attention (486K params, faster, good for quick experiments)
-
-### 1. Generate Demonstrations (using the bot)
+### 1. Generate Demonstrations
 
 ```bash
-uv run python scripts/make_demos.py --env BabyAI-GoToLocal-v0 --episodes 10 --valid-episodes 5 --demos demos/goto_local
+uv run python scripts/make_demos.py \
+    --env BabyAI-GoToRedBallGrey-v0 \
+    --episodes 10000 \
+    --demos goto_redball_grey_10k
 ```
-
-The bot is a rule-based expert that can solve all BabyAI tasks perfectly, allowing you to generate training data without human demonstrations.
 
 ### 2. Train with Imitation Learning
 
-**Choose your architecture:**
-
-```bash
-# Unified Concept Space ViT (RECOMMENDED) - with predictive processing
-uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
-    --arch unified_vit --instr-arch minilm --model test_model \
-    --batch-size 10 --epochs 50 --val-interval 10
-
-# Baseline ViT - cross-attention based (faster, smaller)
-uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
-    --arch vit --instr-arch minilm --model test_model \
-    --batch-size 10 --epochs 50 --val-interval 10
-
-# With Weights & Biases tracking
-uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
-    --arch unified_vit --instr-arch minilm --model test_model --tb
-
-# Small levels (GoToRedBall, GoToLocal, PickupLoc, PutNextLocal)
-uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos goto_local \
-    --arch unified_vit --instr-arch minilm --batch-size 256 --val-episodes 512
-
-# Larger levels
-uv run python scripts/train_il.py --env BabyAI-GoToDoor-v0 --demos goto_door \
-    --arch unified_vit --instr-arch minilm \
-    --memory-dim 2048 --recurrence 80 --batch-size 128 --epoch-length 51200
-```
-
-### 3. Train with Reinforcement Learning (PPO)
-
-**PPO (Proximal Policy Optimization)** is the primary RL algorithm in Toddler AI. It uses clipped surrogate objectives and value function clipping for stable, efficient policy learning.
-
-```bash
-# Unified Concept Space ViT (RECOMMENDED) - with predictive processing
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm
-
-# Baseline ViT (faster, smaller)
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch vit --instr-arch minilm
-
-# PPO with custom hyperparameters
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 1000000 --lr 5e-5 --entropy-coef 0.05 --clip-eps 0.2 --ppo-epochs 4 \
-    --batch-size 256 --frames-per-proc 128 --discount 0.99 --gae-lambda 0.99
-
-# PPO with pretrained model from imitation learning
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --pretrained-model models/your_il_model
-
-# PPO with learning rate scheduling (recommended for long training runs)
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 1000000 --lr-schedule cosine
-
-# PPO with early stopping (saves compute time)
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --early-stop-threshold 0.95 --early-stop-patience 20
-
-# PPO with all stability features enabled
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 1000000 --lr-schedule cosine \
-    --early-stop-threshold 0.95 --early-stop-patience 20
-```
-
-**Key PPO hyperparameters (optimized for sparse rewards):**
-- `--lr`: Learning rate (default: **5e-5**, tuned for pretrained MiniLM encoder)
-- `--entropy-coef`: Entropy coefficient (default: **0.05**, maintains exploration)
-- `--value-loss-coef`: Value loss coefficient (default: **0.1**, tuned for stability with pretrained models)
-- `--reward-scale`: Reward multiplier (default: **1.0**, optimal for BabyAI's sparse binary rewards)
-- `--clip-eps`: PPO clipping parameter (default: 0.2)
-- `--ppo-epochs`: Number of PPO update epochs per batch (default: 4)
-- `--batch-size`: Batch size for PPO updates (default: 1280)
-- `--gae-lambda`: GAE lambda for advantage estimation (default: 0.99)
-- `--discount`: Reward discount factor (default: 0.99)
-
-**Advanced stability features:**
-- `--lr-schedule`: Learning rate schedule - `linear` or `cosine` (default: None). Decays LR to 10% over training for smoother convergence
-- `--early-stop-threshold`: Success rate threshold for early stopping (default: None, e.g., 0.95 for 95%)
-- `--early-stop-patience`: Number of updates to sustain threshold before stopping (default: 20)
-- `--use-target-network`: Enable target network for value function bootstrapping (default: False). Provides more stable value targets by using a periodically-updated copy of the value network
-- `--target-update-freq`: Target network update frequency in updates (default: 10)
-- `--mixed-precision`: Enable FP16 mixed precision training (default: False). **CUDA only** - provides faster training and lower memory usage on NVIDIA GPUs
-
-**⚡ Stability Improvements:** PPO includes automatic advantage normalization, optional LR scheduling, and early stopping. Training is stable out-of-the-box with ~700 FPS and smooth convergence.
-
-**🔬 Experimental Features:**
-
-The following features are available but may not provide benefits in all scenarios:
-
-**Target Network (`--use-target-network`)**
-
-Borrowed from DQN, uses a frozen copy of the value network for bootstrapping to reduce moving target bias. Updated every `--target-update-freq` updates (default: 10).
-
-```bash
-# Enable target network
-uv run python scripts/train_rl.py --env BabyAI-GoToRedBallGrey-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --use-target-network --target-update-freq 10
-```
-
-**When to use:**
-- Long training runs (100K+ frames) where value function stability is critical
-- Environments with high variance in value estimates
-- When experiencing training instability despite advantage normalization
-
-**Tested results (BabyAI-GoToRedBallGrey-v0, 20K frames, Apple M4):**
-- Performance: No significant FPS impact (~222 FPS baseline vs ~223 FPS with target network)
-- Stability: No clear advantage in short training runs; benefits expected in longer runs
-- Device support: ✅ Fully functional on MPS, CUDA, and CPU
-
-**Mixed Precision Training (`--mixed-precision`)**
-
-Uses FP16 (half precision) for forward/backward passes with gradient scaling for faster training and lower memory usage.
-
-```bash
-# Enable mixed precision (CUDA only)
-uv run python scripts/train_rl.py --env BabyAI-GoToRedBallGrey-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --mixed-precision
-```
-
-**Device support:**
-- ✅ CUDA (NVIDIA GPUs): Fully supported with `torch.cuda.amp.GradScaler`
-- ❌ MPS (Apple Silicon): Not supported - MPS has its own optimizations, mixed precision provides no benefit
-- ❌ CPU: Not supported
-
-**Note:** These features are disabled by default as the core PPO implementation is already stable and performant for BabyAI tasks. Enable them only when addressing specific training challenges.
-
-### Two-Stage Training: IL Pre-training + PPO Fine-tuning (RECOMMENDED)
-
-For best sample efficiency and performance, use a two-stage training pipeline:
-
-**Stage 1: Imitation Learning (IL) Pre-training**
-
-Train on expert demonstrations from the bot to initialize the policy with strong priors:
-
-```bash
-# Generate expert demonstrations using the bot
-uv run python scripts/make_demos.py --env BabyAI-GoToRedBallGrey-v0 \
-    --episodes 1000 --valid-episodes 512 --demos goto_redball_grey
-
-# Train with IL to learn from demonstrations
-uv run python scripts/train_il.py --env BabyAI-GoToRedBallGrey-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --demos goto_redball_grey --demos-origin agent --episodes 1000 \
-    --model goto_redball_il --epochs 100
-```
-
-**Stage 2: PPO Fine-tuning**
-
-Fine-tune the IL-pretrained model with PPO for optimal performance:
-
-```bash
-# Fine-tune with PPO starting from IL checkpoint
-uv run python scripts/train_rl.py --env BabyAI-GoToRedBallGrey-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --pretrained-model models/goto_redball_il_best \
-    --frames 100000
-```
-
-**Why this works:**
-- **Better sample efficiency:** IL provides strong initialization, reducing frames needed for PPO
-- **Faster convergence:** Starting from expert behavior accelerates learning
-- **Higher final performance:** Combines supervised learning stability with RL exploration
-- **Curriculum learning:** IL teaches basic competence, PPO optimizes for edge cases
-
-**Expected benefits:**
-- Significantly reduced sample complexity compared to PPO from scratch
-- More stable training with better initial policy
-- IL demonstrates ~90%+ validation accuracy on simple tasks with just 1000 expert demonstrations
-
-### Progressive Training Curriculum
-
-Train models progressively from simple to complex tasks using transfer learning. This curriculum leverages the full range of 98 BabyAI environments, gradually building skills from basic navigation to complex multi-step reasoning.
-
-#### Phase 1: Basic Navigation (150-200K frames total)
-
-Start with the simplest navigation tasks to learn basic movement and object recognition.
-
-**1a. GoToRedBallGrey** (100K frames) - Train from scratch
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToRedBallGrey-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --model phase1a_goto_redball_grey
-```
-- Goal: Navigate to red ball in grey environment (no distractors)
-- Success threshold: 90%+
-
-**1b. GoToRedBall** (50K frames) - Add distractors
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToRedBall-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 50000 --pretrained-model models/phase1a_goto_redball_grey_best \
-    --model phase1b_goto_redball
-```
-- Goal: Navigate with colored distractors
-- Success threshold: 85%+
-
-**1c. GoTo** (50K frames) - Generalize to any object
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoTo-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 50000 --pretrained-model models/phase1b_goto_redball_best \
-    --model phase1c_goto
-```
-- Goal: Navigate to any single object by name
-- Success threshold: 85%+
-
-#### Phase 2: Spatial Reasoning (300K frames total)
-
-Learn spatial relationships and references (left, right, front, behind).
-
-**2a. GoToLocal** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase1c_goto_best \
-    --model phase2a_goto_local
-```
-- Goal: "Go to the X on your left/right"
-- Success threshold: 80%+
-
-**2b. GoToLocalS6N3** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToLocalS6N3-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase2a_goto_local_best \
-    --model phase2b_goto_local_s6n3
-```
-- Goal: Spatial reasoning in 6x6 room with 3 objects
-- Success threshold: 75%+
-
-**2c. GoToLocalS8N6** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToLocalS8N6-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase2b_goto_local_s6n3_best \
-    --model phase2c_goto_local_s8n6
-```
-- Goal: Spatial reasoning in larger 8x8 room with 6 objects
-- Success threshold: 70%+
-
-#### Phase 3: Object Properties (400K frames total)
-
-Understand object attributes (color, type) in various environments.
-
-**3a. GoToObj** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToObj-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase2c_goto_local_s8n6_best \
-    --model phase3a_goto_obj
-```
-- Goal: Navigate to objects by color and type
-- Success threshold: 80%+
-
-**3b. GoToObjS6** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToObjS6-v1 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase3a_goto_obj_best \
-    --model phase3b_goto_obj_s6
-```
-- Goal: Object properties in larger rooms
-- Success threshold: 75%+
-
-**3c. GoToObjMazeOpen** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToObjMazeOpen-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase3b_goto_obj_s6_best \
-    --model phase3c_goto_obj_maze_open
-```
-- Goal: Navigate through simple open mazes
-- Success threshold: 70%+
-
-#### Phase 4: Sequential Actions - Pickup (400K frames total)
-
-Learn to manipulate objects by picking them up.
-
-**4a. Pickup** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-Pickup-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase3c_goto_obj_maze_open_best \
-    --model phase4a_pickup
-```
-- Goal: Navigate and pickup objects
-- Success threshold: 75%+
-
-**4b. PickupLoc** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-PickupLoc-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase4a_pickup_best \
-    --model phase4b_pickup_loc
-```
-- Goal: Pickup with spatial references
-- Success threshold: 70%+
-
-**4c. PickupDist** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-PickupDist-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase4b_pickup_loc_best \
-    --model phase4c_pickup_dist
-```
-- Goal: Pickup with many distractors
-- Success threshold: 65%+
-
-#### Phase 5: Door Basics (300K frames total)
-
-Learn to interact with doors (without keys).
-
-**5a. Open** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-Open-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase4c_pickup_dist_best \
-    --model phase5a_open
-```
-- Goal: Learn door opening action
-- Success threshold: 75%+
-
-**5b. OpenDoor** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-OpenDoor-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase5a_open_best \
-    --model phase5b_open_door
-```
-- Goal: Open specific doors by attribute
-- Success threshold: 70%+
-
-**5c. OpenTwoDoors** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-OpenTwoDoors-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase5b_open_door_best \
-    --model phase5c_open_two_doors
-```
-- Goal: Open multiple doors in sequence
-- Success threshold: 65%+
-
-#### Phase 6: Keys and Unlocking (400K frames total)
-
-Introduce key mechanics and locked doors.
-
-**6a. Unlock** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-Unlock-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase5c_open_two_doors_best \
-    --model phase6a_unlock
-```
-- Goal: Pickup key and unlock door
-- Success threshold: 70%+
-
-**6b. UnlockLocal** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-UnlockLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase6a_unlock_best \
-    --model phase6b_unlock_local
-```
-- Goal: Unlock with spatial reasoning
-- Success threshold: 65%+
-
-**6c. UnlockPickup** (100K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-UnlockPickup-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 100000 --pretrained-model models/phase6b_unlock_local_best \
-    --model phase6c_unlock_pickup
-```
-- Goal: Unlock door then pickup object
-- Success threshold: 60%+
-
-#### Phase 7: Complex Multi-Door (500K frames total)
-
-Master navigation through multiple locked doors.
-
-**7a. KeyCorridorS3R1** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-KeyCorridorS3R1-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase6c_unlock_pickup_best \
-    --model phase7a_keycorridor_s3r1
-```
-- Goal: Navigate 3-room corridor with 1 key
-- Success threshold: 60%+
-
-**7b. KeyCorridorS4R3** (200K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-KeyCorridorS4R3-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 200000 --pretrained-model models/phase7a_keycorridor_s3r1_best \
-    --model phase7b_keycorridor_s4r3
-```
-- Goal: 4 rooms with 3 keys
-- Success threshold: 55%+
-
-**7c. UnlockToUnlock** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-UnlockToUnlock-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase7b_keycorridor_s4r3_best \
-    --model phase7c_unlock_to_unlock
-```
-- Goal: Chain unlocking multiple doors
-- Success threshold: 55%+
-
-#### Phase 8: Placement Tasks (500K frames total)
-
-Learn to place objects in specific locations.
-
-**8a. PutNextS4N1** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-PutNextS4N1-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase7c_unlock_to_unlock_best \
-    --model phase8a_putnext_s4n1
-```
-- Goal: Pickup and place next to target (small room)
-- Success threshold: 60%+
-
-**8b. PutNextLocal** (200K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-PutNextLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 200000 --pretrained-model models/phase8a_putnext_s4n1_best \
-    --model phase8b_putnext_local
-```
-- Goal: Placement with spatial reasoning
-- Success threshold: 55%+
-
-**8c. PutNextS6N3** (150K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-PutNextS6N3-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 150000 --pretrained-model models/phase8b_putnext_local_best \
-    --model phase8c_putnext_s6n3
-```
-- Goal: Complex placement with multiple objects
-- Success threshold: 50%+
-
-#### Phase 9: Synthetic Combinations (800K frames total)
-
-Combine all learned skills in synthetic tasks.
-
-**9a. SynthLoc** (300K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-SynthLoc-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 300000 --pretrained-model models/phase8c_putnext_s6n3_best \
-    --model phase9a_synth_loc
-```
-- Goal: Synthetic tasks with spatial reasoning
-- Success threshold: 50%+
-
-**9b. SynthS5R2** (250K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-SynthS5R2-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 250000 --pretrained-model models/phase9a_synth_loc_best \
-    --model phase9b_synth_s5r2
-```
-- Goal: Medium synthetic complexity
-- Success threshold: 45%+
-
-**9c. Synth** (250K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-Synth-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 250000 --pretrained-model models/phase9b_synth_s5r2_best \
-    --model phase9c_synth
-```
-- Goal: Full synthetic task diversity
-- Success threshold: 40%+
-
-#### Phase 10: Boss Levels (1M+ frames total)
-
-Final challenge with all skills combined.
-
-**10a. MiniBossLevel** (400K frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-MiniBossLevel-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 400000 --pretrained-model models/phase9c_synth_best \
-    --model phase10a_miniboss
-```
-- Goal: Warmup for final boss
-- Success threshold: 35%+
-
-**10b. BossLevel** (600K+ frames)
-```bash
-uv run python scripts/train_rl.py --env BabyAI-BossLevel-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 600000 --pretrained-model models/phase10a_miniboss_best \
-    --model phase10b_boss
-```
-- Goal: Ultimate challenge - all skills, maximum complexity
-- Success threshold: 30%+
-
-**Transfer Learning Strategy:**
-- Each phase uses the best model from the previous phase as initialization
-- Lower learning rates (default 5e-5) work well for transfer learning
-- Monitor validation success rate to determine when to move to next phase
-- If a phase plateaus early, consider increasing `--frames` or adjusting hyperparameters
-
-Training typically takes several hours per phase. Models and logs are saved to `models/` and `logs/` directories.
-
-**Experiment Tracking with Weights & Biases:**
-
-Add the `--tb` flag to any training command to log metrics to [wandb.ai](https://wandb.ai):
-- Beautiful interactive dashboards
-- Compare multiple runs
-- Track hyperparameters automatically
-- Free for personal/academic use
-
-First time setup:
-```bash
-uv sync --extra tracking  # Install wandb
-uv run wandb login        # Login with your wandb account
-```
-
-Then train with tracking:
-```bash
-uv run python scripts/train_il.py --env BabyAI-GoToLocal-v0 --demos demos/goto_local \
-    --arch vit --instr-arch minilm --model my_model --tb
-```
-
-View your experiments at: https://wandb.ai
-
-## Hardware Acceleration
-
-Toddler AI automatically detects and uses the best available device:
-
-**NVIDIA GPUs (CUDA):**
-- Fully supported for both IL and RL training
-- 3-5x speedup over CPU
-- Automatically detected and used
-
-**Apple Silicon (MPS):**
-- ✅ Fully supported for RL training on M-series chips (M1/M2/M3/M4)
-- ~230 FPS for PPO training with unified_vit + MiniLM on M4
-- Automatically detected and used
-- IL training may still use CPU due to some operations
-
-**CPU:**
-- Works well for all training tasks
-- ~60 FPS for PPO training on modern CPUs
-- Default fallback if no GPU available
-
-The code automatically selects the best device with priority: CUDA > MPS > CPU. No configuration needed.
-
-### 4. Evaluate Agent Performance
-
-```bash
-uv run python scripts/evaluate.py --env BabyAI-GoToLocal-v0 --model test_model --episodes 10 --argmax
-```
-
-Evaluates on specified number of episodes and reports success rate.
-
-### 5. Visualize Agent Behavior
-
-```bash
-uv run python scripts/enjoy.py --env BabyAI-GoToLocal-v0 --model test_model
-```
-
-Watch your trained agent solve tasks in real-time with rendering.
-
-## Model Architecture
-
-Toddler AI provides two attention-based architectures:
-
-### Unified Concept Space ViT (RECOMMENDED)
-
-**Cognitive architecture with predictive processing (8.4M params):**
-
-```
-Goal (MiniLM) → [256] ─┐
-Actions (history) → [10, 256] ─┼─→ Unified Buffer [~60, 256] → Self-Attention → Pool → [256]
-Vision (patches) → [49, 256] ─┘                                                           ↓
-                                                                          ┌─────────────────┴─────────────────┐
-                                                                          ↓                                     ↓
-                                                                    Output Heads                          Predictions
-                                                             (MLP Actor + MLP Critic)               (vision, supplemental)
-```
-
-**Key Features:**
-1. **Unified 256-dim concept space** - Vision, language, and action history encoded in shared embedding space for multimodal understanding
-2. **Action embeddings for history** - [7, 256] matrix encodes past actions into concept space (NOT used for action selection)
-3. **Working memory** - Last 10 actions with temporal position encodings
-4. **Predictive processing** - Model predicts next observation patches (supplemental, weak 0.01 coefficient)
-5. **Self-attention over everything** - Goal, action history, and vision patches all attend to each other
-6. **Specialized output heads** - MLP actor for action selection, MLP critic for value estimation
-
-**Architecture Flow:**
-1. **MiniLM Projection (98K)**: 384-dim → 256-dim concept space
-2. **Patch Embedding (768)**: 7×7 image → 49 tokens (256-dim each)
-3. **Action Embeddings (1.8K)**: 7 actions × 256-dim (for encoding action history only)
-4. **Unified Self-Attention (2.6M)**: 2 layers, 4 heads over concatenated [goal, action_history, vision]
-5. **Pool (65K)**: Mean pool → single 256-dim state concept
-6. **Actor Head (33K)**: MLP (256 → 128 → 7) → action logits (stable gradients, proper entropy)
-7. **Critic Head (33K)**: MLP (256 → 128 → 1) → value
-8. **Vision Predictor (3.2M)**: state_concept → next observation patches [49, 256] (supplemental, 0.01 coefficient)
-
-**Why Unified Concept Space?**
-- **Multimodal understanding**: Vision, language, and action history encoded in shared semantic space
-- **Cross-modal attention**: Goal can attend to vision, vision to action history, creating rich contextual understanding
-- **Supplemental prediction**: Vision prediction provides dense learning signal to improve representations (weak 0.01 coefficient)
-- **Natural memory**: Temporal position encodings create smooth memory decay for action history
-- **Efficient**: Single attention mechanism processes all modalities together
-
-**Mental Model:**
-```
-Inputs (Multimodal) → Unified Concept Space (Understanding) → Specialized Outputs (Decisions)
-     ↓                            ↓                                      ↓
-Goal + Vision + History    Self-Attention Reasoning          MLP Actor + MLP Critic
-```
-
-The unified concept space is for **perception and understanding** of the multimodal context. Actions are **task-specific outputs** produced from that understanding, using specialized MLP heads that provide stable gradients and proper entropy.
-
-**Predictive Processing (Supplemental):**
-Vision prediction helps learn better representations by predicting next observation patches (MSE loss, 0.01 coefficient). This is intentionally weak to not interfere with the primary RL objective, but provides a small auxiliary signal for representation learning.
-
-### Baseline Vision Transformer (ViT) + MiniLM
-
-**Cross-attention based baseline architecture (486K params):**
-
-This is the **baseline** architecture - smaller (17x) and faster than UnifiedViT. Use for quick experiments, resource-constrained environments, or baseline comparisons.
-```
-Image → Patch Embeddings → Self-Attention → Cross-Attention ← MiniLM
-                                                    ↓
-                                            Pool → Memory → Actor/Critic
-```
-
-**Architecture Flow:**
-1. **Patch Embedding (271K params)**: 7×7 image → 49 patch tokens (128-dim each)
-2. **Vision Self-Attention (271K params)**: Patches reason about spatial relationships
-3. **Cross-Attention (271K params)**: Vision queries language for grounding
-4. **Mean Pooling**: 49 patches → single 128-dim vector
-5. **LSTM Memory** (optional): Temporal context
-6. **Actor/Critic Heads**: Action distribution + value function
-
-**With MiniLM (23.2M trainable params):**
-```
-Text → MiniLM (22.7M) → Projection (49K) → Cross-Attn ← Vision
-                                                ↓
-                                        Pool → Memory → Actor/Critic
-```
-
-**Why ViT?** Modern attention-based architecture that works across modalities (spatial, temporal, multi-modal). ViT is efficient for BabyAI's 7×7 grids (only 49 patches!) and provides better generalization than CNNs.
-
-## MiniLM Language Encoder
-
-ViT uses pretrained MiniLM (all-MiniLM-L6-v2, 384-dim, 22.7M params) as the default language encoder, providing better language understanding than training a GRU from scratch.
-
-### Three Training Modes
-
-#### 1. FREEZE Mode (Fast, 1.25M trainable params)
 ```bash
 uv run python scripts/train_il.py \
-    --env BabyAI-GoToLocal-v0 \
-    --demos demos/goto_local \
+    --env BabyAI-GoToRedBallGrey-v0 \
+    --arch unified_vit \
     --instr-arch minilm \
-    --freeze-minilm
+    --demos goto_redball_grey_10k \
+    --demos-origin agent \
+    --episodes 10000 \
+    --model my_model \
+    --epochs 100 \
+    --val-interval 10
 ```
-- MiniLM: **FROZEN** ❄️ (0 params trained)
-- Only projection + model train
-- **Use when:** Maximum speed, trust pretrained knowledge
 
-#### 2. DECAY Mode - RECOMMENDED (23.2M trainable params with ViT)
+### 3. Train with PPO
+
 ```bash
-uv run python scripts/train_il.py \
-    --env BabyAI-GoToLocal-v0 \
-    --demos demos/goto_local \
-    --arch vit \
-    --instr-arch minilm
-    # This is the default - no extra flags needed!
-```
-
-**3-Tier Differential Learning Rates (ViT):**
-- MiniLM: **HIGH INERTIA** 🏋️ (22.7M params @ LR=1e-6, weight_decay=0.1)
-- ViT components: **MEDIUM INERTIA** ⚖️ (271K params @ LR=1e-5, weight_decay=0.01)
-- Task-specific: **TRAINS FREELY** 🆓 (215K params @ LR=1e-4, weight_decay=0.0)
-
-**Use when:** Want adaptation while protecting pretrained knowledge (DEFAULT for ViT + MiniLM)
-
-**What "high inertia" means:**
-```python
-Loss = Task_Loss + 0.1 * ||θ_minilm - θ_pretrained||²
-```
-MiniLM resists moving away from pretrained weights via L2 regularization.
-
-#### 3. FREE Mode (Maximum adaptation, 23.9M trainable params)
-```bash
-uv run python scripts/train_il.py \
-    --env BabyAI-GoToLocal-v0 \
-    --demos demos/goto_local \
+uv run python scripts/train_rl.py \
+    --env BabyAI-GoToRedBallGrey-v0 \
+    --arch unified_vit \
     --instr-arch minilm \
-    --minilm-lr-multiplier 1.0 \
-    --minilm-weight-decay 0.0
+    --frames 1000000
 ```
-- MiniLM + Model: **BOTH TRAIN FREELY** 🆓
-- **Use when:** Lots of data, want maximum task adaptation
-- **Risk:** Catastrophic forgetting of pretrained knowledge
 
-### Fine-tuning Controls
+### 4. Evaluate
 
 ```bash
---minilm-lr-multiplier 0.01       # LR multiplier for encoder (0.01 = 100x smaller)
---minilm-weight-decay 0.1         # Inertia strength (higher = more resistance)
---freeze-minilm                   # Completely freeze encoder
-```
-
-### Verify Installation
-
-```bash
-# MiniLM is automatically included in core dependencies
-uv run python -c "from sentence_transformers import SentenceTransformer; print('✓ MiniLM ready!')"
-```
-
-### Why MiniLM?
-
-MiniLM provides pre-trained language understanding (22.7M params trained on 1B+ sentence pairs), offering:
-- ✅ **Better generalization** - Understands natural language instructions out-of-the-box
-- ✅ **Transfer learning** - Leverages knowledge from massive text corpora
-- ✅ **Semantic understanding** - Captures meaning, not just token patterns
-- ✅ **Task adaptation** - Fine-tunes to BabyAI tasks while retaining general knowledge
-
-## PPO Training Stability
-
-Toddler AI's PPO implementation has been optimized for **sparse reward environments** like BabyAI, where rewards are typically binary (0 for failure, 1 for success).
-
-### Core Stability Features
-
-**1. Automatic Advantage Normalization**
-
-PPO now normalizes advantages before computing policy loss, preventing gradient explosions with reward scaling:
-
-```python
-# Normalize advantages per mini-batch (critical for stability)
-advantage_normalized = (advantage - advantage.mean()) / (advantage.std() + 1e-8)
-```
-
-Without this, sparse rewards + reward scaling cause advantages to have std ~8.5 instead of ~1.0, leading to:
-- Exploding policy gradients (grad norm > 18)
-- Value loss spikes (up to 50x normal)
-- Volatile success rates (0% → 75% → 0%)
-
-**2. Optimized Defaults for Sparse Rewards**
-
-| Parameter | Old Default | New Default | Why Changed |
-|-----------|-------------|-------------|-------------|
-| `reward_scale` | 20.0 | **1.0** | Prevents value loss explosion (380 → 0.25) |
-| `value_loss_coef` | 0.5 | **0.1** | Balances policy/value learning with pretrained models |
-| `lr` | 1e-4 | **5e-5** | Stability with pretrained MiniLM encoder |
-| `entropy_coef` | 0.01 | **0.05** | Maintains exploration, prevents premature convergence |
-
-**Why this matters:** With `reward_scale=20` and binary rewards [0, 1], returns become [0, 20]. If the value function predicts 0.5 for a return of 20, the squared error is `(20 - 0.5)² = 380.25`, which **dominates** the total loss and causes training instability.
-
-**3. Learning Rate Scheduling (Optional)**
-
-For long training runs, LR scheduling prevents late-stage instability:
-
-```bash
-# Cosine annealing (recommended) - smooth decay
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 1000000 --lr-schedule cosine
-
-# Linear decay - simpler alternative
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --frames 1000000 --lr-schedule linear
-```
-
-**Benefits:**
-- Prevents overshooting when policy is near-optimal
-- Smoother convergence in later training stages
-- Decays from initial LR to 10% over training duration
-- +8% higher final success rate observed in tests
-
-**4. Early Stopping (Optional)**
-
-Save compute time by stopping when target performance is reached:
-
-```bash
-uv run python scripts/train_rl.py --env BabyAI-GoToLocal-v0 \
-    --arch unified_vit --instr-arch minilm \
-    --early-stop-threshold 0.95 --early-stop-patience 20
-```
-
-Stops training if success rate ≥ 95% for 20 consecutive logging intervals.
-
-### Performance Comparison
-
-| Metric | Before (old defaults) | After (optimized) |
-|--------|-------------------|------------------|
-| **Value Loss** | 1.0 → 52.8 ⚠️ | 0.02 → 0.04 ✅ |
-| **Gradient Norm** | Up to 18.9 ⚠️ | 0.1 → 0.9 ✅ |
-| **Success Rate** | 12% → 40% (unstable) ⚠️ | 96% (stable) ✅ |
-| **FPS** | ~230 | ~700-710 |
-| **Stability** | Volatile, fluctuating | Smooth, monotonic improvement |
-
-### When to Override Defaults
-
-The new defaults work best for BabyAI's sparse binary rewards. Override if:
-- Your environment has **dense rewards** (reward every step)
-- Your environment has **continuous rewards** (not just 0/1)
-- Rewards are already **normalized** to a small range
-
-```bash
-# For dense/continuous reward environments
-uv run python scripts/train_rl.py --env YourEnv-v0 \
-    --reward-scale 10.0 --value-loss-coef 0.5
+uv run python scripts/evaluate.py \
+    --env BabyAI-GoToRedBallGrey-v0 \
+    --model my_model \
+    --episodes 100
 ```
 
 ## Project Structure
 
 ```
 toddler-ai/
-├── src/toddler_ai/              # Main package (46 Python files)
-│   ├── envs/                    # Environment definitions
-│   │   ├── core/                # Core Minigrid components (grid, actions, objects)
-│   │   ├── babyai/              # BabyAI language-conditioned environments
-│   │   │   └── core/            # Level generation and verification
-│   │   ├── minigrid_env.py      # Base Minigrid environment class
-│   │   └── wrappers.py          # Observation/action wrappers
-│   ├── models/                  # Neural network models
-│   │   ├── unified_vit_model.py # Unified concept space ViT with predictive processing (RECOMMENDED, 8.4M params)
-│   │   ├── vit_model.py         # Vision Transformer with cross-attention (baseline, 486K params)
-│   │   ├── common.py            # Shared model components (MiniLMProjection, etc.)
-│   │   ├── rl_base.py           # Base RL model interface
-│   │   └── format.py            # Model formatting utilities
-│   ├── algorithms/              # Training algorithms
-│   │   ├── ppo.py               # PPO (Proximal Policy Optimization) - Primary RL method
-│   │   ├── imitation.py         # Imitation learning from demonstrations
-│   │   └── base.py              # Base RL algorithm interface
-│   ├── agents/                  # Agent implementations
-│   │   └── bot.py               # Rule-based expert bot
-│   └── utils/                   # Utilities (12 modules)
-│       ├── demos.py             # Demo loading/saving
-│       ├── agent.py             # Agent utilities
-│       ├── model.py             # Model save/load
-│       ├── log.py               # Logging
-│       └── ...                  # And more
-├── scripts/                     # Executable scripts (6 files)
-│   ├── train_il.py              # Train with imitation learning
-│   ├── train_rl.py              # Train with RL (PPO)
-│   ├── make_demos.py            # Generate demonstrations
-│   ├── evaluate.py              # Evaluate model success rate
-│   ├── enjoy.py                 # Visualize agent behavior
-│   └── manual_control.py        # Human control interface
-├── tests/                       # Unit tests
-├── pyproject.toml               # Modern Python packaging (uv-compatible)
-├── .pre-commit-config.yaml      # Code quality hooks
-└── README.md                    # You are here
+├── src/toddler_ai/
+│   ├── models/
+│   │   └── unified_vit_model.py    # Main architecture
+│   ├── algorithms/
+│   │   ├── imitation.py            # Behavioral cloning
+│   │   └── ppo.py                  # PPO RL
+│   └── utils/
+│       ├── format.py               # MiniLMPreprocessor with bert-tiny
+│       └── agent.py                # ModelAgent for inference
+├── scripts/
+│   ├── train_il.py                 # IL training
+│   ├── train_rl.py                 # RL training
+│   ├── make_demos.py               # Demo generation
+│   └── evaluate.py                 # Evaluation
+└── demos/                          # Saved demonstrations
 ```
 
-## Development
+## Hardware
 
-### Setup Development Environment
+Automatically uses best available device:
+- CUDA (NVIDIA GPUs)
+- MPS (Apple Silicon) - ~2500 FPS for IL training
+- CPU fallback
 
-```bash
-# Install all dependencies (uv sync installs everything from pyproject.toml)
-uv sync
+## Memory System
 
-# Install pre-commit hooks (auto-formats on commit)
-uv run pre-commit install
-```
+The unified_vit uses action history as memory:
+- 10-element history of action indices (torch.long)
+- Updated externally with shift-left-and-add pattern
+- Temporal position encodings for smooth decay
+- Reset to zeros at episode boundaries
 
-### Run Tests
-
-```bash
-uv run pytest tests/
-```
-
-### Code Quality
-
-This project uses pre-commit hooks to maintain code quality:
-- **black** - Code formatting (line length: 100)
-- **isort** - Import sorting
-- **flake8** - Linting
-- **pyright** - Type checking (basic mode)
-
-```bash
-# Run manually
-uv run black src/ scripts/ tests/
-uv run isort src/ scripts/ tests/
-uv run flake8 src/ scripts/ tests/
-
-# Or just commit and hooks run automatically
-git commit -m "your message"
-```
-
-## Repository Stats
-
-- **46 Python modules** in `src/toddler_ai/`
-- **6 training/evaluation scripts** ready to use
-- **7 BabyAI environment types** (goto, open, pickup, putnext, synth, unlock, other)
-- **2 training algorithms** (PPO for RL, Imitation Learning for behavioral cloning)
-- **1 expert bot** for generating perfect demonstrations
-- **100% gymnasium API** (modern replacement for OpenAI Gym)
-- **Automatic GPU detection** (CUDA > MPS > CPU priority)
-- **Modern experiment tracking** (Weights & Biases integration)
-
-## Citation
-
-This project builds upon:
-
-**Minigrid:**
-```bibtex
-@inproceedings{MinigridMiniworld23,
-  author       = {Maxime Chevalier{-}Boisvert and Bolun Dai and Mark Towers and Rodrigo Perez{-}Vicente and Lucas Willems and Salem Lahlou and Suman Pal and Pablo Samuel Castro and Jordan Terry},
-  title        = {Minigrid {\&} Miniworld: Modular {\&} Customizable Reinforcement Learning Environments for Goal-Oriented Tasks},
-  booktitle    = {NeurIPS},
-  year         = {2023},
-}
-```
-
-**BabyAI:**
-```bibtex
-@inproceedings{babyai_iclr19,
-  title={BabyAI: First Steps Towards Grounded Language Learning With a Human In the Loop},
-  author={Maxime Chevalier-Boisvert and Dzmitry Bahdanau and Salem Lahlou and Lucas Willems and Chitwan Saharia and Thien Huu Nguyen and Yoshua Bengio},
-  booktitle={ICLR},
-  year={2019},
-}
+**IL Training Memory Update:**
+```python
+# In imitation.py for unified_vit
+new_memory = torch.zeros_like(memory)
+new_memory[:, :-1] = memory[:, 1:]  # Shift left
+new_memory[:, -1] = action_step     # Add new action
+memory = new_memory
 ```
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License
 
 ## Acknowledgments
 
-- [Farama Foundation](https://farama.org/) for Minigrid environments
-- [Mila](https://mila.quebec/en/) for BabyAI language-conditioned tasks and rule-based bot
-- OpenAI for PPO algorithm ([Schulman et al., 2017](https://arxiv.org/abs/1707.06347))
-- Microsoft for MiniLM sentence transformer ([Wang et al., 2020](https://arxiv.org/abs/2002.10957))
+- [Farama Foundation](https://farama.org/) for Minigrid
+- [Mila](https://mila.quebec/) for BabyAI
+- OpenAI for PPO algorithm

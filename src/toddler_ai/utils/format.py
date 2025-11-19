@@ -54,41 +54,38 @@ class RawImagePreprocessor(object):
     def __call__(self, obss, device=None):
         images = numpy.array([obs["image"] for obs in obss])
         images = torch.tensor(images, device=device, dtype=torch.float)
+        # Normalize from 0-10 range to 0-1 (BabyAI encodes: object 0-10, color 0-5, state 0-2)
+        images = images / 10.0
         return images
 
 
 class MiniLMPreprocessor(ObservationPreprocessor):
-    """MiniLM-based observation preprocessor.
+    """Language model-based observation preprocessor.
 
-    Uses pre-trained sentence transformers to encode text instructions
-    into embeddings. The encoder can be fine-tuned during training.
-
-    Supported models:
-    - 'sentence-transformers/all-MiniLM-L6-v2' (default, 384-dim, 22.7M params)
-    - 'sentence-transformers/paraphrase-MiniLM-L3-v2' (smaller, 384-dim, 17.4M params)
-    - 'sentence-transformers/all-MiniLM-L12-v2' (larger, 384-dim, 33.4M params)
+    Uses bert-tiny (4.4M params, 128-dim) for efficient instruction encoding.
+    Small enough to train with full gradients.
     """
     def __init__(self, model_name, obs_space=None,
-                 model_name_minilm='sentence-transformers/all-MiniLM-L6-v2',
+                 model_name_minilm='prajjwal1/bert-tiny',
                  freeze_encoder=False):
-        if not SENTENCE_TRANSFORMERS_AVAILABLE:
-            raise ImportError(
-                "sentence-transformers not installed. "
-                "Install with: uv sync --extra language"
-            )
-
         self.image_preproc = RawImagePreprocessor()
         self.freeze_encoder = freeze_encoder
 
-        # Load MiniLM encoder
+        # Load bert-tiny encoder
         import logging
+        from transformers import AutoModel, AutoTokenizer
         logger = logging.getLogger(__name__)
         logger.info(f'Loading language model: {model_name_minilm}')
-        self.minilm_encoder = SentenceTransformer(model_name_minilm)
+
+        self.tokenizer = AutoTokenizer.from_pretrained(model_name_minilm)
+        self.minilm_encoder = AutoModel.from_pretrained(model_name_minilm)
+
+        encoder_params = sum(p.numel() for p in self.minilm_encoder.parameters())
+        logger.info(f'  Encoder: {encoder_params/1e6:.1f}M params, 128-dim output')
 
         # Set trainability
         if freeze_encoder:
-            logger.info('  Freezing encoder weights (projection only trainable)')
+            logger.info('  Freezing encoder weights')
             for param in self.minilm_encoder.parameters():
                 param.requires_grad = False
         else:
@@ -98,7 +95,7 @@ class MiniLMPreprocessor(ObservationPreprocessor):
 
         self.obs_space = {
             "image": 147,
-            "minilm_emb": 384  # MiniLM output dimension (same for L3/L6/L12)
+            "minilm_emb": 128  # bert-tiny output dimension
         }
 
     def __call__(self, obss, device=None):
@@ -108,66 +105,34 @@ class MiniLMPreprocessor(ObservationPreprocessor):
         if "image" in self.obs_space.keys():
             obs_.image = self.image_preproc(obss, device=device)
 
-        # Process instructions with MiniLM
+        # Process instructions with bert-tiny
         if "minilm_emb" in self.obs_space.keys():
             # Extract mission texts
             missions = [obs["mission"] for obs in obss]
 
-            # Compute MiniLM embeddings
+            # Tokenize
+            encoded = self.tokenizer(
+                missions,
+                padding=True,
+                truncation=True,
+                return_tensors='pt'
+            )
+
+            # Move to device
+            if device:
+                encoded = {k: v.to(device) for k, v in encoded.items()}
+                self.minilm_encoder = self.minilm_encoder.to(device)
+
+            # Forward pass (with or without gradients based on freeze_encoder)
             if self.freeze_encoder:
-                # Frozen: compute outside grad context, then enable grad for projection
                 with torch.no_grad():
-                    embeddings = self.minilm_encoder.encode(
-                        missions,
-                        convert_to_tensor=True,
-                        show_progress_bar=False,
-                        device=device if device else 'cpu'
-                    )
-                # Clone and enable gradients for projection layer
-                obs_.minilm_emb = embeddings.clone().detach().requires_grad_(True)
+                    outputs = self.minilm_encoder(**encoded)
+                embeddings = outputs.last_hidden_state[:, 0, :].detach()  # CLS token
             else:
-                # Trainable: compute WITH gradients - full finetuning!
-                # NOTE: We can't use .encode() because it uses inference_mode internally.
-                # Instead, we use the underlying model directly with tokenization.
-                from transformers import AutoTokenizer
+                outputs = self.minilm_encoder(**encoded)
+                embeddings = outputs.last_hidden_state[:, 0, :]  # CLS token
 
-                # Get the tokenizer and model from SentenceTransformer
-                tokenizer = self.minilm_encoder.tokenizer
-                model = self.minilm_encoder[0].auto_model  # The transformer model
-
-                # Tokenize
-                encoded = tokenizer(
-                    missions,
-                    padding=True,
-                    truncation=True,
-                    return_tensors='pt'
-                )
-
-                # Move to device
-                if device:
-                    encoded = {k: v.to(device) for k, v in encoded.items()}
-
-                # Forward pass WITH gradients
-                outputs = model(**encoded)
-
-                # Mean pooling (same as SentenceTransformer)
-                attention_mask = encoded['attention_mask']
-                token_embeddings = outputs[0]  # First element is last_hidden_state
-                input_mask_expanded = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
-                sum_embeddings = torch.sum(token_embeddings * input_mask_expanded, 1)
-                sum_mask = torch.clamp(input_mask_expanded.sum(1), min=1e-9)
-                embeddings = sum_embeddings / sum_mask
-
-                # Normalize (same as SentenceTransformer)
-                embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-
-                # For RL: detach to avoid backward through graph multiple times (PPO epochs)
-                # For IL: gradients flow through (single backward pass per batch)
-                # We detach here, and projection layer will have gradients
-                obs_.minilm_emb = embeddings.detach()
-
-            if device and obs_.minilm_emb.device != device:
-                obs_.minilm_emb = obs_.minilm_emb.to(device)
+            obs_.minilm_emb = embeddings
 
         return obs_
 

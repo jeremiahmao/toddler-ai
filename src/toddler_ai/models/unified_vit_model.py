@@ -183,10 +183,11 @@ class UnifiedViTACModel(nn.Module):
         self.history_length = history_length if use_memory else 0
         self.vision_pred_coef = vision_pred_coef
 
-        # MiniLM projection (384-dim → embed_dim)
+        # Language model projection (128-dim bert-tiny → embed_dim)
         if "minilm_emb" in obs_space:
-            # Simple linear projection from MiniLM embeddings to concept space
-            self.minilm_projection = nn.Linear(384, embed_dim)
+            # Get embedding dimension from obs_space
+            instr_dim = obs_space.get("minilm_emb", 128)
+            self.minilm_projection = nn.Linear(instr_dim, embed_dim)
         else:
             self.minilm_projection = None
 
@@ -298,8 +299,8 @@ class UnifiedViTACModel(nn.Module):
                 raise ValueError("No instruction embedding provided")
         else:
             # instr_embedding was provided - check if it needs projection
-            # If it's 384-dim (raw MiniLM), project it to embed_dim
-            if instr_embedding.size(-1) == 384 and self.minilm_projection is not None:
+            # If it's not already embed_dim, project it
+            if instr_embedding.size(-1) != self.embed_dim and self.minilm_projection is not None:
                 goal_embedding = self.minilm_projection(instr_embedding)  # [B, embed_dim]
             else:
                 goal_embedding = instr_embedding
@@ -308,7 +309,8 @@ class UnifiedViTACModel(nn.Module):
 
         # 2. Get vision patch embeddings
         # Input: [B, H, W, C] → Transpose to [B, C, H, W]
-        image = obs.image.permute(0, 3, 1, 2).float() / 255.0  # Normalize to [0, 1]
+        # Note: images are pre-normalized in format.py (values 0-10 → 0-1)
+        image = obs.image.permute(0, 3, 1, 2).float()
         vision_patches = self.patch_embed(image)  # [B, num_patches, embed_dim]
 
         # Store current vision for prediction target
@@ -343,7 +345,7 @@ class UnifiedViTACModel(nn.Module):
         # Action selection: standard MLP actor head
         # This provides stable gradients and proper entropy
         action_logits = self.actor(state_concept)  # [B, num_actions]
-        dist = Categorical(logits=F.log_softmax(action_logits, dim=1))
+        dist = Categorical(logits=action_logits)
 
         # Value function
         value = self.critic(state_concept).squeeze(1)  # [B]

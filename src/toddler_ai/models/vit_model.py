@@ -250,11 +250,12 @@ class ViTACModel(nn.Module):
         self.memory_dim = memory_dim
         self.image_size = image_size
 
-        # Stage 0: MiniLM projection (384-dim → embed_dim)
-        # Only needed when using MiniLM language encoder
+        # Stage 0: Language model projection (input_dim → embed_dim)
+        # Only needed when using language encoder (bert-tiny: 128-dim)
         if "minilm_emb" in obs_space:
             from toddler_ai.models.common import MiniLMProjection
-            self.minilm_projection = MiniLMProjection(instr_dim=embed_dim, minilm_dim=384)
+            instr_dim = obs_space.get("minilm_emb", 128)
+            self.minilm_projection = MiniLMProjection(instr_dim=embed_dim, minilm_dim=instr_dim)
         else:
             self.minilm_projection = None
 
