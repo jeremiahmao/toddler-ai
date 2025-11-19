@@ -443,7 +443,7 @@ if __name__ == "__main__":
                 best_mean_return = mean_return
                 save_model = True
             if save_model:
-                utils.save_model(acmodel, args.model + "_best")
+                utils.save_model(acmodel, args.model, suffix="best")
                 logger.info(f"Return {mean_return: .2f}; best model is saved")
             else:
                 logger.info(f"Return {mean_return: .2f}; not the best model; not saved")

@@ -75,7 +75,6 @@ uv run python scripts/make_demos.py \
 uv run python scripts/train_il.py \
     --env BabyAI-GoToRedBallGrey-v0 \
     --arch unified_vit \
-    --instr-arch minilm \
     --demos goto_redball_grey_10k \
     --demos-origin agent \
     --episodes 10000 \
@@ -84,13 +83,19 @@ uv run python scripts/train_il.py \
     --val-interval 10
 ```
 
-### 3. Train with PPO
+### 3. Fine-tune with PPO
+
+IL→PPO is a well-established approach:
+- **Sample efficiency**: IL gives a strong policy quickly; PPO from scratch on sparse rewards can take millions of frames to stumble on success
+- **Avoiding local minima**: Random initialization often gets stuck; starting from a competent policy means PPO optimizes in a good region
+- **Complementary strengths**: IL copies behavior but can't improve beyond demos; PPO optimizes for reward but needs good exploration. Combined: IL provides exploration, PPO provides optimization
 
 ```bash
 uv run python scripts/train_rl.py \
     --env BabyAI-GoToRedBallGrey-v0 \
     --arch unified_vit \
-    --instr-arch minilm \
+    --pretrained-model my_model \
+    --model my_model_ppo \
     --frames 1000000
 ```
 

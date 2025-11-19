@@ -534,7 +534,8 @@ class ImitationLearning(object):
         def initial_status():
             return {'i': 0,
                     'num_frames': 0,
-                    'patience': 0}
+                    'patience': 0,
+                    'best_success_rate': 0}
 
         status = initial_status()
         if os.path.exists(status_path) and not reset_status:
@@ -553,7 +554,9 @@ class ImitationLearning(object):
         utils.save_model(self.acmodel, self.args.model)
 
         # best mean return to keep track of performance on validation set
-        best_success_rate, patience, i = 0, 0, 0
+        # Handle old status files that don't have best_success_rate
+        if 'best_success_rate' not in status:
+            status['best_success_rate'] = 0
         total_start_time = time.time()
 
         epoch_length = self.args.epoch_length
@@ -635,8 +638,8 @@ class ImitationLearning(object):
                     csv_writer.writerow(train_data + validation_data)
 
                 # In case of a multi-env, the update condition would be "better mean success rate" !
-                if np.mean(success_rate) > best_success_rate:
-                    best_success_rate = np.mean(success_rate)
+                if np.mean(success_rate) > status['best_success_rate']:
+                    status['best_success_rate'] = np.mean(success_rate)
                     status['patience'] = 0
                     with open(status_path, 'w') as dst:
                         json.dump(status, dst)
@@ -658,4 +661,4 @@ class ImitationLearning(object):
                 with open(status_path, 'w') as dst:
                     json.dump(status, dst)
 
-        return best_success_rate
+        return status['best_success_rate']
