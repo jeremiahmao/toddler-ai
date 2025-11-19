@@ -116,7 +116,7 @@ if __name__ == "__main__":
 
     # Define model name
     suffix = datetime.datetime.now().strftime("%y-%m-%d-%H-%M-%S")
-    instr = args.instr_arch if args.instr_arch else "noinstr"
+    instr = "bert-tiny"
     mem = "mem" if not args.no_mem else "nomem"
     model_name_parts = {
         "env": args.env,
@@ -139,17 +139,13 @@ if __name__ == "__main__":
     utils.configure_logging(args.model)
     logger = logging.getLogger(__name__)
 
-    # Define obss preprocessor
-    if args.instr_arch == "minilm":
-        # Use MiniLM-based preprocessor for modern language understanding
-        obss_preprocessor = utils.MiniLMObssPreprocessor(
-            args.model,
-            envs[0].observation_space,
-            freeze_encoder=getattr(args, "freeze_minilm", False),
-        )
-        logger.info("Using MiniLM language encoder (pretrained)")
-    else:
-        raise ValueError(f"Unsupported instr_arch: {args.instr_arch}. Only 'minilm' is supported.")
+    # Define obss preprocessor (always uses bert-tiny text encoder)
+    obss_preprocessor = utils.MiniLMObssPreprocessor(
+        args.model,
+        envs[0].observation_space,
+        freeze_encoder=getattr(args, "freeze_minilm", False),
+    )
+    logger.info("Using bert-tiny text encoder")
 
     # Define actor-critic model
     acmodel = utils.load_model(args.model, raise_not_found=False)

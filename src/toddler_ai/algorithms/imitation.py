@@ -131,15 +131,12 @@ class ImitationLearning(object):
             observation_space = self.env.observation_space
             action_space = self.env.action_space
 
-        # Choose preprocessor based on instruction architecture
-        if self.args.instr_arch == 'minilm':
-            logger.info('Using MiniLM preprocessor for instruction encoding')
-            # freeze_encoder=False means we FINETUNE the full encoder (default for toddler learning)
-            freeze_minilm = getattr(args, 'freeze_minilm', False)
-            self.obss_preprocessor = utils.MiniLMObssPreprocessor(
-                args.model, observation_space, freeze_encoder=freeze_minilm)
-        else:
-            raise ValueError(f"Unsupported instr_arch: {self.args.instr_arch}. Only 'minilm' is supported.")
+        # Set up preprocessor (always uses bert-tiny text encoder)
+        logger.info('Using bert-tiny text encoder')
+        # freeze_encoder=False means we FINETUNE the full encoder (default for toddler learning)
+        freeze_minilm = getattr(args, 'freeze_minilm', False)
+        self.obss_preprocessor = utils.MiniLMObssPreprocessor(
+            args.model, observation_space, freeze_encoder=freeze_minilm)
 
         # Define actor-critic model
         self.acmodel = utils.load_model(args.model, raise_not_found=False)
@@ -196,8 +193,8 @@ class ImitationLearning(object):
         param_groups = []
 
         # Collect parameters by component for differential learning rates
-        if (self.args.arch in ['vit', 'unified_vit']) and self.args.instr_arch == 'minilm':
-            logger.info(f'  Setting up differential learning rates for {self.args.arch} + MiniLM architecture')
+        if self.args.arch in ['vit', 'unified_vit']:
+            logger.info(f'  Setting up differential learning rates for {self.args.arch} + bert-tiny architecture')
 
             # 1. MiniLM encoder (if not frozen) - MODERATE INERTIA
             if hasattr(self.obss_preprocessor, 'minilm_encoder') and not self.obss_preprocessor.freeze_encoder:
@@ -273,10 +270,9 @@ class ImitationLearning(object):
 
             self.optimizer = torch.optim.Adam(param_groups, eps=self.args.optim_eps)
 
-        elif (self.args.instr_arch == 'minilm' and
-              hasattr(self.obss_preprocessor, 'minilm_encoder') and
+        elif (hasattr(self.obss_preprocessor, 'minilm_encoder') and
               not self.obss_preprocessor.freeze_encoder):
-            # MiniLM with FiLM model (old architecture)
+            # bert-tiny with non-ViT model (old architecture)
             self.obss_preprocessor.minilm_encoder.to(self.device)
             minilm_lr_multiplier = getattr(self.args, 'minilm_lr_multiplier', 0.01)
             minilm_weight_decay = getattr(self.args, 'minilm_weight_decay', 0.1)
@@ -300,7 +296,7 @@ class ImitationLearning(object):
 
             logger.info(f'  Using differential training parameters:')
             logger.info(f'    - Model: {sum(p.numel() for p in model_params if p.requires_grad):,} params @ LR={self.args.lr}, weight_decay=0.0 (TRAINS FREELY)')
-            logger.info(f'    - MiniLM: {sum(p.numel() for p in encoder_params if p.requires_grad):,} params @ LR={minilm_lr}, weight_decay={minilm_weight_decay} (HIGH INERTIA)')
+            logger.info(f'    - bert-tiny: {sum(p.numel() for p in encoder_params if p.requires_grad):,} params @ LR={minilm_lr}, weight_decay={minilm_weight_decay} (HIGH INERTIA)')
             logger.info(f'    - Total trainable: {sum(p.numel() for g in param_groups for p in g["params"] if p.requires_grad):,} params')
 
             self.optimizer = torch.optim.Adam(param_groups, eps=self.args.optim_eps)
@@ -319,11 +315,10 @@ class ImitationLearning(object):
 
         # Define model name
         suffix = datetime.datetime.now().strftime("%y-%m-%d-%H-%M-%S")
-        instr = args.instr_arch if args.instr_arch else "noinstr"
         model_name_parts = {
             'envs': named_envs,
             'arch': args.arch,
-            'instr': instr,
+            'instr': 'bert-tiny',
             'seed': args.seed,
             'suffix': suffix}
         default_model_name = "{envs}_IL_{arch}_{instr}_seed{seed}_{suffix}".format(**model_name_parts)
@@ -408,10 +403,9 @@ class ImitationLearning(object):
             # For unified_vit, we don't pass instr_embedding - let the model extract it from obs
             # This ensures the projection happens inside the model with proper gradient flow
             instr_embedding = None
-        elif self.args.instr_arch == 'minilm':
-            instr_embedding = self.acmodel._get_instr_embedding(None, minilm_embeddings=preprocessed_first_obs.minilm_emb)
         else:
-            instr_embedding = self.acmodel._get_instr_embedding(preprocessed_first_obs.instr)
+            # Always use bert-tiny embeddings
+            instr_embedding = self.acmodel._get_instr_embedding(None, minilm_embeddings=preprocessed_first_obs.minilm_emb)
 
         # Loop terminates when every observation in the flat_batch has been handled
         while True:

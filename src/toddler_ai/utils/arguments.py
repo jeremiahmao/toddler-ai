@@ -67,8 +67,10 @@ class ArgumentParser(argparse.ArgumentParser):
                             help="dimensionality of the memory LSTM")
         self.add_argument("--no-instr", action="store_true", default=False,
                             help="don't use instructions in the model")
+        # Note: instr-arch is deprecated - we always use bert-tiny for text encoding
+        # Kept for backwards compatibility but ignored
         self.add_argument("--instr-arch", default="minilm",
-                            help="instruction encoder architecture (default: minilm)")
+                            help="DEPRECATED: always uses bert-tiny text encoder")
         self.add_argument("--no-mem", action="store_true", default=False,
                             help="don't use memory in the model")
         self.add_argument("--arch", default='vit',

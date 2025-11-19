@@ -63,9 +63,46 @@ class PPOAlgo(BaseAlgo):
 
         assert self.batch_size % self.recurrence == 0
 
-        self.optimizer = torch.optim.Adam(
-            self.acmodel.parameters(), lr, (beta1, beta2), eps=adam_eps
-        )
+        # Move model and preprocessor to device
+        self.acmodel.to(self.device)
+        if hasattr(self.preprocess_obss, 'minilm_encoder'):
+            self.preprocess_obss.minilm_encoder = self.preprocess_obss.minilm_encoder.to(self.device)
+            print(f"Moved model and bert-tiny encoder to {self.device}")
+
+        # Set up optimizer with bert-tiny parameters if using minilm
+        if (hasattr(self.preprocess_obss, 'minilm_encoder') and
+            not self.preprocess_obss.freeze_encoder):
+            # Include bert-tiny parameters with differential learning rates
+            # Similar to imitation learning setup
+            minilm_lr_multiplier = 0.1  # 10x smaller LR for bert-tiny
+            minilm_lr = lr * minilm_lr_multiplier
+
+            encoder_params = list(self.preprocess_obss.minilm_encoder.parameters())
+            model_params = list(self.acmodel.parameters())
+
+            param_groups = [
+                {
+                    'params': model_params,
+                    'lr': lr,
+                    'betas': (beta1, beta2),
+                    'eps': adam_eps
+                },
+                {
+                    'params': encoder_params,
+                    'lr': minilm_lr,
+                    'betas': (beta1, beta2),
+                    'eps': adam_eps
+                }
+            ]
+
+            self.optimizer = torch.optim.Adam(param_groups)
+            print(f"PPO optimizer includes bert-tiny: {sum(p.numel() for p in encoder_params):,} params @ LR={minilm_lr:.2e}")
+            print(f"PPO optimizer includes model: {sum(p.numel() for p in model_params):,} params @ LR={lr:.2e}")
+        else:
+            # Standard optimizer
+            self.optimizer = torch.optim.Adam(
+                self.acmodel.parameters(), lr, (beta1, beta2), eps=adam_eps
+            )
 
         # Learning rate scheduler for stability
         self.lr_scheduler = None
@@ -103,14 +140,29 @@ class PPOAlgo(BaseAlgo):
 
         self.batch_num = 0
 
+        # Store raw observations separately for per-batch preprocessing
+        self.collected_raw_obs = None
+
     def collect_experiences(self):
-        """Override to use target network for value bootstrapping if enabled"""
-        # Call parent's collect_experiences but intercept the bootstrap value computation
-        # We need to do the collection ourselves if using target network
+        """Override to use target network for value bootstrapping if enabled AND to store raw observations for PPO"""
+        # We need to modify the experiences to add raw_obs for per-batch preprocessing during PPO updates
 
         if not self.use_target_network:
-            # Use parent implementation if not using target network
-            return super().collect_experiences()
+            # Use parent implementation but store raw observations separately
+            exps, log = super().collect_experiences()
+
+            # Store raw observations separately from DictList
+            # This avoids issues with DictList trying to index Python lists
+            self.collected_raw_obs = [self.obss[i][j]
+                                     for j in range(self.num_procs)
+                                     for i in range(self.num_frames_per_proc)]
+
+            # Remove the preprocessed obs to indicate it needs fresh preprocessing
+            # We can't set to None because DictList.__getitem__ will try to index into None
+            if 'obs' in exps:
+                del exps['obs']
+
+            return exps, log
 
         # Custom implementation with target network for bootstrap value
         # This is based on BaseAlgo.collect_experiences() but uses target network
@@ -189,11 +241,11 @@ class PPOAlgo(BaseAlgo):
         from toddler_ai.utils.dictlist import DictList
 
         exps = DictList()
-        # Store raw observations for re-encoding in each epoch
-        # This allows backprop through bert-tiny during PPO
-        exps.raw_obs = [self.obss[i][j]
-                    for j in range(self.num_procs)
-                    for i in range(self.num_frames_per_proc)]
+        # Store raw observations separately from DictList
+        # This avoids issues with DictList trying to index Python lists
+        self.collected_raw_obs = [self.obss[i][j]
+                                 for j in range(self.num_procs)
+                                 for i in range(self.num_frames_per_proc)]
 
         exps.memory = self.memories.transpose(0, 1).reshape(-1, *self.memories.shape[2:])
         exps.mask = self.masks.transpose(0, 1).reshape(-1).unsqueeze(1)
@@ -209,8 +261,9 @@ class PPOAlgo(BaseAlgo):
 
         # Note: We no longer preprocess here. Instead, we preprocess fresh
         # for each epoch to allow backprop through bert-tiny.
-        # Set exps.obs to None to indicate it needs preprocessing
-        exps.obs = None
+        # Remove the preprocessed obs to indicate it needs fresh preprocessing
+        if 'obs' in exps:
+            del exps['obs']
 
         # Log some values
         keep = max(self.log_done_counter, self.num_procs)
@@ -276,7 +329,12 @@ class PPOAlgo(BaseAlgo):
                 batch_indices = []
                 for i in range(self.recurrence):
                     batch_indices.extend((inds + i).tolist())
-                batch_raw_obs = [exps.raw_obs[idx] for idx in batch_indices]
+
+                # Use the raw observations stored separately from DictList
+                if self.collected_raw_obs is None:
+                    raise RuntimeError("collected_raw_obs is None - collect_experiences() must be called first")
+
+                batch_raw_obs = [self.collected_raw_obs[idx] for idx in batch_indices]
                 batch_obs = self.preprocess_obss(batch_raw_obs, device=self.device)
 
                 # Initialize batch values
