@@ -416,24 +416,23 @@ class ImitationLearning(object):
             with torch.no_grad():
                 # taking the memory till len(inds), as demos beyond that have already finished
                 instr_emb_slice = instr_embedding[:len(inds)] if instr_embedding is not None else None
-                new_memory = self.acmodel(
+                model_output = self.acmodel(
                     preprocessed_obs,
-                    memory[:len(inds), :], instr_emb_slice)['memory']
+                    memory[:len(inds), :], instr_emb_slice)
 
             memories[inds, :] = memory[:len(inds), :]
 
-            # For unified_vit, memory contains action history indices
-            # Update memory by shifting left and adding the action taken at this step
+            # For unified_vit, memory stores full 256-dim representations (episodic memory)
+            # Update memory by shifting left and adding the new state representation
             if self.args.arch == 'unified_vit' and self.acmodel.memory_size > 0:
-                # Get actions at current indices
-                actions_at_inds = action_true[inds]
-                # Shift memory left and add new action
+                embed_dim = self.acmodel.embed_dim
+                # Shift memory left by one entry (embed_dim floats) and add new memory
                 updated_memory = torch.zeros_like(memory[:len(inds), :])
-                updated_memory[:, :-1] = memory[:len(inds), 1:]  # Shift left
-                updated_memory[:, -1] = actions_at_inds  # Add new action
+                updated_memory[:, :-embed_dim] = memory[:len(inds), embed_dim:]  # Shift left
+                updated_memory[:, -embed_dim:] = model_output['new_memory']  # Add new representation
                 memory[:len(inds), :] = updated_memory
             else:
-                memory[:len(inds), :] = new_memory
+                memory[:len(inds), :] = model_output['memory']
 
             episode_ids[inds] = range(len(inds))
 
@@ -461,15 +460,16 @@ class ImitationLearning(object):
             instr_emb_batch = instr_embedding[episode_ids[indexes]] if instr_embedding is not None else None
             model_results = self.acmodel(
                 preprocessed_obs, memory * mask_step,
-                instr_emb_batch)
+                instr_emb_batch, action=action_step)  # Pass action for vision prediction
             dist = model_results['dist']
 
-            # For unified_vit, update memory with actual action taken (from demos)
+            # For unified_vit, update memory with new state representation (episodic memory)
             if self.args.arch == 'unified_vit' and self.acmodel.memory_size > 0:
-                # Shift memory left and add the true action
+                embed_dim = self.acmodel.embed_dim
+                # Shift memory left by one entry (embed_dim floats) and add new memory
                 new_memory = torch.zeros_like(memory)
-                new_memory[:, :-1] = memory[:, 1:]  # Shift left
-                new_memory[:, -1] = action_step  # Add true action from demo
+                new_memory[:, :-embed_dim] = memory[:, embed_dim:]  # Shift left
+                new_memory[:, -embed_dim:] = model_results['new_memory']  # Add new representation
                 memory = new_memory
             else:
                 memory = model_results['memory']

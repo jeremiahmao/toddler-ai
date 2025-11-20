@@ -73,7 +73,17 @@ class ModelAgent(Agent):
             model_results = self.model(preprocessed_obs, self.memory)
             dist = model_results['dist']
             value = model_results['value']
-            self.memory = model_results['memory']
+
+            # For unified_vit, update memory externally with new_memory (episodic memory)
+            if hasattr(self.model, 'embed_dim') and self.model.memory_size > 0:
+                embed_dim = self.model.embed_dim
+                # Shift memory left by one entry and add new representation
+                new_memory = torch.zeros_like(self.memory)
+                new_memory[:, :-embed_dim] = self.memory[:, embed_dim:]  # Shift left
+                new_memory[:, -embed_dim:] = model_results['new_memory']  # Add new
+                self.memory = new_memory
+            else:
+                self.memory = model_results['memory']
 
         if self.argmax:
             action = dist.probs.argmax(1)

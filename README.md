@@ -16,27 +16,31 @@ Toddler AI is a cognitive architecture research platform featuring:
 ### Unified Concept Space ViT (12.7M params)
 
 ```
-Goal (bert-tiny) → [256] ─┐
-Actions (history) → [10, 256] ─┼─→ Self-Attention [~60, 256] → Pool → [256]
-Vision (patches) → [49, 256] ─┘                                        ↓
-                                                              Actor + Critic MLPs
+Goal (bert-tiny) → [256] ─────────────────┐
+Episodic Memory → [64, 256] ──────────────┼─→ Self-Attention [~114, 256] → Pool → [256]
+Vision (patches) → [49, 256] ─────────────┘                                        ↓
+                                                                          Actor + Critic MLPs
 ```
 
 **Parameter Breakdown:**
 - bert-tiny encoder: 4.4M params (128-dim output)
 - Projection layer: 33K params (128 → 256)
 - Patch embedding: 768 params (7×7 → 49 patches × 256-dim)
-- Action embeddings: 1.8K params (7 actions × 256-dim)
+- Temporal position embeddings: 16K params (64 memory slots × 256-dim)
+- Action embeddings: 1.8K params (7 actions × 256-dim, for vision prediction)
 - Self-attention: 2.6M params (2 layers, 4 heads)
 - Pool layer: 65K params
 - Actor head: 33K params (256 → 128 → 7)
 - Critic head: 33K params (256 → 128 → 1)
-- Vision predictor: 3.2M params (supplemental, 0.01 coefficient)
+- Vision predictor: 3.2M params (supplemental, predicts next observation)
 
 **Key Design:**
 - All modalities encoded in shared 256-dim concept space
-- Action history as memory (last 10 actions with temporal encodings)
+- Episodic memory: 64 full 256-dim representations of past experiences
+- Each memory entry captures consolidated experience (goal + vision + context)
+- Self-attention learns to retrieve relevant past experiences
 - Memory updated externally with shift-left-and-add pattern
+- Action-conditioned vision prediction (predicts next observation given action)
 - Specialized MLP heads for action selection (not attention-based)
 
 ### Training
@@ -138,18 +142,21 @@ Automatically uses best available device:
 
 ## Memory System
 
-The unified_vit uses action history as memory:
-- 10-element history of action indices (torch.long)
+The unified_vit uses episodic memory to store past experiences:
+- 64 slots × 256-dim = 16,384 floats per batch
+- Each memory entry is a full 256-dim pooled representation (goal + vision + context)
 - Updated externally with shift-left-and-add pattern
 - Temporal position encodings for smooth decay
 - Reset to zeros at episode boundaries
+- Self-attention learns which past experiences to retrieve
 
-**IL Training Memory Update:**
+**Memory Update Pattern:**
 ```python
-# In imitation.py for unified_vit
+# In training and inference for unified_vit
+embed_dim = model.embed_dim  # 256
 new_memory = torch.zeros_like(memory)
-new_memory[:, :-1] = memory[:, 1:]  # Shift left
-new_memory[:, -1] = action_step     # Add new action
+new_memory[:, :-embed_dim] = memory[:, embed_dim:]  # Shift left by one entry
+new_memory[:, -embed_dim:] = model_results['new_memory']  # Add new representation
 memory = new_memory
 ```
 

@@ -2,15 +2,16 @@
 Unified Concept Space Vision Transformer (ViT) with Predictive Processing.
 
 Cognitive architecture inspired by human toddler learning:
-- All modalities (vision, language, action history) in unified 256-dim concept space
-- Working memory: action history buffer with temporal position encodings
-- Action embeddings for encoding action history into concept space
-- Predictive processing: model predicts next observations (supplemental)
-- Self-attention over entire context (goal + action_history + vision)
+- All modalities (vision, language, episodic memory) in unified 256-dim concept space
+- Episodic memory: stores full 256-dim pooled representations from past timesteps
+- Each memory entry captures consolidated experience (goal + vision + context)
+- Self-attention learns to retrieve relevant past experiences
+- Predictive processing: model predicts next observations conditioned on action (supplemental)
 - Specialized MLP output heads for action selection and value estimation
 
 Mental model: Inputs (multimodal) → Unified Concept Space (understanding) → Outputs (decisions).
 The unified space is for perception and understanding; actions are task-specific outputs.
+Memory stores consolidated experiences as full representations, not just action indices.
 """
 
 import torch
@@ -167,11 +168,11 @@ class UnifiedViTACModel(nn.Module):
         image_size=7,
         patch_size=1,
         embed_dim=256,  # Unified concept space dimension
-        use_memory=True,  # Use action history
+        use_memory=True,  # Use episodic memory
         attn_depth=2,  # Number of attention layers
         attn_heads=4,  # Number of attention heads
         dropout=0.1,
-        history_length=30,  # Number of past actions to remember (sized for progressive curriculum)
+        history_length=64,  # Number of past experiences to remember (episodic memory slots)
         vision_pred_coef=0.01  # Coefficient for vision prediction loss (supplemental, weak)
     ):
         super().__init__()
@@ -200,10 +201,10 @@ class UnifiedViTACModel(nn.Module):
         )
         self.num_patches = self.patch_embed.num_patches
 
-        # Action embeddings (for encoding action history into concept space)
+        # Action embeddings (for vision prediction conditioning)
         self.action_embeddings = nn.Embedding(self.num_actions, embed_dim)
 
-        # Temporal position embeddings for action history
+        # Temporal position embeddings for episodic memory
         if use_memory:
             self.temporal_pos_embeddings = nn.Parameter(
                 torch.randn(1, history_length, embed_dim)
@@ -254,32 +255,35 @@ class UnifiedViTACModel(nn.Module):
     def memory_size(self):
         """Memory size for compatibility with existing training code.
 
-        Memory stores action history as integer indices.
+        Memory stores full 256-dim representations for each timestep.
+        Shape: [B, history_length * embed_dim] flattened for storage.
         """
         if self.use_memory:
-            return self.history_length
+            return self.history_length * self.embed_dim
         return 0
 
     @property
     def semi_memory_size(self):
-        """For compatibility."""
-        return self.history_length if self.use_memory else 0
+        """For compatibility - returns flattened memory size."""
+        return self.history_length * self.embed_dim if self.use_memory else 0
 
-    def forward(self, obs, memory, instr_embedding=None):
+    def forward(self, obs, memory, instr_embedding=None, action=None):
         """
         Args:
             obs: Observation dict with:
                 - image: [B, H, W, 3] image tensor
-                - minilm_emb: [B, 384] language embedding from MiniLM
-            memory: [B, history_length] action history (integer action indices)
+                - minilm_emb: [B, 128] language embedding from bert-tiny
+            memory: [B, history_length * embed_dim] episodic memory (flattened representations)
             instr_embedding: Optional pre-computed instruction embedding
+            action: Optional [B] action indices for vision prediction conditioning
 
         Returns:
             dict with:
                 - dist: action distribution
                 - value: state value
-                - memory: updated memory (action history)
-                - extra_predictions: dict with vision_pred, progress_pred
+                - memory: same memory (updated externally with new_memory)
+                - new_memory: [B, embed_dim] the new memory entry to store
+                - extra_predictions: dict with vision_pred (conditioned on action if provided)
         """
         batch_size = obs.image.size(0)
 
@@ -316,19 +320,20 @@ class UnifiedViTACModel(nn.Module):
         # Store current vision for prediction target
         current_vision_patches = vision_patches.detach()
 
-        # 3. Get action history embeddings
+        # 3. Get episodic memory representations
         if self.use_memory and memory.size(1) > 0:
-            # Memory contains action indices [B, history_length]
-            # Embed actions and add temporal position encodings
-            action_history = self.action_embeddings(memory.long())  # [B, history_length, embed_dim]
-            action_history = action_history + self.temporal_pos_embeddings  # Add temporal positions
+            # Memory is flattened: [B, history_length * embed_dim]
+            # Reshape to [B, history_length, embed_dim]
+            episodic_memory = memory.view(batch_size, self.history_length, self.embed_dim)
+            # Add temporal position encodings
+            episodic_memory = episodic_memory + self.temporal_pos_embeddings
         else:
             # No memory: empty sequence
-            action_history = torch.zeros(batch_size, 0, self.embed_dim).to(goal_token.device)
+            episodic_memory = torch.zeros(batch_size, 0, self.embed_dim).to(goal_token.device)
 
         # 4. Build unified context buffer
-        # Concatenate: [goal, action_history, vision_patches]
-        context = torch.cat([goal_token, action_history, vision_patches], dim=1)
+        # Concatenate: [goal, episodic_memory, vision_patches]
+        context = torch.cat([goal_token, episodic_memory, vision_patches], dim=1)
         # Shape: [B, 1 + history_length + num_patches, embed_dim]
 
         # 5. Self-attention over context
@@ -351,9 +356,16 @@ class UnifiedViTACModel(nn.Module):
         value = self.critic(state_concept).squeeze(1)  # [B]
 
         # Predictive outputs
-        # Vision prediction: what will I see next?
+        # Vision prediction: what will I see next, conditioned on action?
         # This is supplemental - helps learn better state representations
-        vision_pred_flat = self.vision_predictor(state_concept)  # [B, num_patches * embed_dim]
+        if action is not None:
+            # Condition prediction on action taken
+            action_emb = self.action_embeddings(action.long())  # [B, embed_dim]
+            pred_input = state_concept + action_emb  # Add action context
+        else:
+            pred_input = state_concept
+
+        vision_pred_flat = self.vision_predictor(pred_input)  # [B, num_patches * embed_dim]
         vision_pred = vision_pred_flat.view(batch_size, self.num_patches, self.embed_dim)  # [B, num_patches, embed_dim]
 
         # Package predictions for loss computation
@@ -366,5 +378,6 @@ class UnifiedViTACModel(nn.Module):
             'dist': dist,
             'value': value,
             'memory': memory,  # Memory stays same during forward (updated externally)
+            'new_memory': state_concept.detach(),  # New memory entry to store [B, embed_dim]
             'extra_predictions': extra_predictions
         }

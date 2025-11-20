@@ -174,10 +174,21 @@ class PPOAlgo(BaseAlgo):
                 model_results = self.acmodel(preprocessed_obs, self.memory * self.mask.unsqueeze(1))
                 dist = model_results['dist']
                 value = model_results['value']
-                memory = model_results['memory']
                 extra_predictions = model_results.get('extra_predictions')
 
             action = dist.sample()
+
+            # For unified_vit, update memory externally with new_memory
+            if self.args.arch == 'unified_vit' and self.acmodel.memory_size > 0:
+                embed_dim = self.acmodel.embed_dim
+                # Shift memory left by one entry and add new representation
+                memory = torch.zeros_like(self.memory)
+                memory[:, :-embed_dim] = self.memory[:, embed_dim:]  # Shift left
+                memory[:, -embed_dim:] = model_results['new_memory']  # Add new
+                # Apply mask for done episodes
+                memory = memory * self.mask.unsqueeze(1)
+            else:
+                memory = model_results['memory']
 
             # ParallelEnv returns 4 values (obs, reward, done, env_info)
             obs, reward, done, env_info = self.env.step(action.cpu().numpy())
