@@ -1,0 +1,582 @@
+#!/usr/bin/env python3
+
+"""
+Script to train the agent through reinforcment learning.
+"""
+
+import csv
+import datetime
+import json
+import logging
+import os
+import subprocess
+import time
+import torch
+
+import gymnasium as gym
+import numpy as np
+from minigrid.wrappers import RGBImgPartialObsWrapper
+
+import toddler_ai
+import toddler_ai.utils as utils
+from toddler_ai.algorithms import PPOAlgo
+from toddler_ai.algorithms.ppo_br import PPOBRAlgo  # Import PPO-BR
+from toddler_ai.utils.agent import ModelAgent
+from toddler_ai.utils.arguments import ArgumentParser
+from toddler_ai.utils.evaluate import batch_evaluate
+
+# Parse arguments
+parser = ArgumentParser()
+parser.add_argument("--algo", default="ppo", help="algorithm to use: ppo or ppo-br (default: ppo)")
+parser.add_argument("--discount", type=float, default=0.99, help="discount factor (default: 0.99)")
+parser.add_argument(
+    "--reward-scale",
+    type=float,
+    default=1.0,
+    help="Reward scale multiplier (default: 1.0, optimal for sparse rewards)",
+)
+parser.add_argument(
+    "--gae-lambda",
+    type=float,
+    default=0.99,
+    help="lambda coefficient in GAE formula (default: 0.99, 1 means no gae)",
+)
+parser.add_argument(
+    "--value-loss-coef",
+    type=float,
+    default=0.1,
+    help="value loss term coefficient (default: 0.1, tuned for sparse rewards)",
+)
+parser.add_argument(
+    "--max-grad-norm", type=float, default=0.5, help="maximum norm of gradient (default: 0.5)"
+)
+parser.add_argument(
+    "--clip-eps", type=float, default=0.2, help="clipping epsilon for PPO (default: 0.2)"
+)
+parser.add_argument(
+    "--ppo-epochs", type=int, default=4, help="number of epochs for PPO (default: 4)"
+)
+parser.add_argument(
+    "--save-interval",
+    type=int,
+    default=50,
+    help="number of updates between two saves (default: 50, 0 means no saving)",
+)
+parser.add_argument(
+    "--lr-schedule",
+    type=str,
+    default=None,
+    choices=[None, "linear", "cosine"],
+    help="learning rate schedule: None, linear, or cosine (default: None)",
+)
+parser.add_argument(
+    "--early-stop-threshold",
+    type=float,
+    default=None,
+    help="early stopping success rate threshold (default: None, e.g., 0.95)",
+)
+parser.add_argument(
+    "--early-stop-patience",
+    type=int,
+    default=20,
+    help="early stopping patience in updates (default: 20)",
+)
+parser.add_argument(
+    "--use-target-network",
+    action="store_true",
+    default=False,
+    help="use target network for value function bootstrapping (default: False)",
+)
+parser.add_argument(
+    "--target-update-freq",
+    type=int,
+    default=10,
+    help="target network update frequency in updates (default: 10)",
+)
+parser.add_argument(
+    "--mixed-precision",
+    action="store_true",
+    default=False,
+    help="enable mixed precision training (FP16) for faster training and lower memory (default: False)",
+)
+
+# PPO-BR specific arguments
+parser.add_argument(
+    "--br-coef",
+    type=float,
+    default=0.1,
+    help="behavioral reference loss coefficient for PPO-BR (default: 0.1)",
+)
+parser.add_argument(
+    "--reference-policy-path",
+    type=str,
+    default=None,
+    help="path to reference policy checkpoint for PPO-BR (default: None, uses initial policy)",
+)
+parser.add_argument(
+    "--br-decay",
+    type=str,
+    default=None,
+    choices=[None, "linear", "exponential"],
+    help="decay schedule for BR coefficient: None, linear, or exponential (default: None)",
+)
+parser.add_argument(
+    "--br-min-coef",
+    type=float,
+    default=0.01,
+    help="minimum BR coefficient after decay (default: 0.01)",
+)
+parser.add_argument(
+    "--update-reference-interval",
+    type=int,
+    default=None,
+    help="update reference policy every N updates for curriculum learning (default: None, no updates)",
+)
+
+args = parser.parse_args()
+
+if __name__ == "__main__":
+    utils.seed(args.seed)
+
+    # Generate environments
+    envs = []
+    use_pixel = "pixel" in args.arch
+    env_seeds = []
+    for i in range(args.procs):
+        env = gym.make(args.env)
+        if use_pixel:
+            env = RGBImgPartialObsWrapper(env)
+        # Store seed to use during reset (gymnasium API)
+        env_seeds.append(100 * args.seed + i)
+        envs.append(env)
+
+    # Define model name
+    suffix = datetime.datetime.now().strftime("%y-%m-%d-%H-%M-%S")
+    instr = "bert-tiny"
+    mem = "mem" if not args.no_mem else "nomem"
+    model_name_parts = {
+        "env": args.env,
+        "algo": args.algo,
+        "arch": args.arch,
+        "instr": instr,
+        "mem": mem,
+        "seed": args.seed,
+        "info": "",
+        "coef": "",
+        "suffix": suffix,
+    }
+    default_model_name = "{env}_{algo}_{arch}_{instr}_{mem}_seed{seed}{info}{coef}_{suffix}".format(
+        **model_name_parts
+    )
+    if args.pretrained_model:
+        default_model_name = args.pretrained_model + "_pretrained_" + default_model_name
+    args.model = args.model.format(**model_name_parts) if args.model else default_model_name
+
+    utils.configure_logging(args.model)
+    logger = logging.getLogger(__name__)
+
+    # Define obss preprocessor (always uses bert-tiny text encoder)
+    obss_preprocessor = utils.MiniLMObssPreprocessor(
+        args.model,
+        envs[0].observation_space,
+        freeze_encoder=getattr(args, "freeze_minilm", False),
+    )
+    logger.info("Using bert-tiny text encoder")
+
+    # Define actor-critic model
+    acmodel = utils.load_model(args.model, raise_not_found=False)
+    if acmodel is None:
+        if args.pretrained_model:
+            acmodel = utils.load_model(args.pretrained_model, raise_not_found=True)
+        else:
+            # Use ViT model if arch='vit', otherwise use FiLM-based model
+            if args.arch == "vit":
+                from toddler_ai.models.vit_model import ViTACModel
+
+                logger.info("Using Vision Transformer (ViT) architecture")
+                acmodel = ViTACModel(
+                    obs_space=obss_preprocessor.obs_space,
+                    action_space=envs[0].action_space,
+                    image_size=7,  # BabyAI grid size
+                    patch_size=1,  # Each cell is a patch
+                    embed_dim=args.image_dim,
+                    memory_dim=args.memory_dim,
+                    use_memory=not args.no_mem,
+                    vit_depth=getattr(args, "vit_depth", 1),
+                    vit_heads=getattr(args, "vit_heads", 1),
+                    cross_attn_heads=getattr(args, "cross_attn_heads", 1),
+                    dropout=getattr(args, "dropout", 0.1),
+                )
+            elif args.arch == "unified_vit":
+                from toddler_ai.models.unified_vit_model import UnifiedViTACModel
+
+                logger.info("Using Unified Concept Space ViT with Predictive Processing")
+                logger.info("  - All modalities in 256-dim concept space")
+                logger.info("  - Reusable action embeddings")
+                logger.info("  - Working memory with temporal positions")
+                logger.info("  - Vision prediction (supplemental, weak coefficient)")
+                acmodel = UnifiedViTACModel(
+                    obs_space=obss_preprocessor.obs_space,
+                    action_space=envs[0].action_space,
+                    image_size=7,  # BabyAI grid size
+                    patch_size=1,  # Each cell is a patch
+                    embed_dim=256,  # Fixed unified concept space
+                    use_memory=not args.no_mem,
+                    attn_depth=getattr(args, "attn_depth", 2),
+                    attn_heads=getattr(args, "attn_heads", 4),
+                    dropout=getattr(args, "dropout", 0.1),
+                    history_length=getattr(args, "history_length", 10),
+                    vision_pred_coef=getattr(
+                        args, "vision_pred_coef", 0.01
+                    ),  # Very weak - supplemental only
+                )
+            else:
+                raise ValueError(
+                    f"Unsupported architecture: {args.arch}. Supported: unified_vit, vit"
+                )
+
+    utils.save_model(acmodel, args.model)
+
+    # Define actor-critic algo
+    # Note: Algorithm decides device (may use CPU instead of MPS due to PyTorch limitations)
+
+    def reshape_reward(_0, _1, reward, _2):
+        return args.reward_scale * reward
+
+    if args.algo == "ppo":
+        algo = PPOAlgo(
+            envs,
+            acmodel,
+            args.frames_per_proc,
+            args.discount,
+            args.lr,
+            args.beta1,
+            args.beta2,
+            args.gae_lambda,
+            args.entropy_coef,
+            args.value_loss_coef,
+            args.max_grad_norm,
+            args.recurrence,
+            args.optim_eps,
+            args.clip_eps,
+            args.ppo_epochs,
+            args.batch_size,
+            obss_preprocessor,
+            reshape_reward,
+            env_seeds=env_seeds,
+            lr_schedule=args.lr_schedule,
+            total_frames=args.frames,
+            use_target_network=args.use_target_network,
+            target_update_freq=args.target_update_freq,
+            mixed_precision=args.mixed_precision,
+        )
+    elif args.algo == "ppo-br":
+        logger.info(f"Using PPO-BR with br_coef={args.br_coef}, br_decay={args.br_decay}")
+        if args.reference_policy_path:
+            logger.info(f"Loading reference policy from: {args.reference_policy_path}")
+        else:
+            logger.info("Using initial policy as reference")
+        
+        algo = PPOBRAlgo(
+            envs,
+            acmodel,
+            args.frames_per_proc,
+            args.discount,
+            args.lr,
+            args.beta1,
+            args.beta2,
+            args.gae_lambda,
+            args.entropy_coef,
+            args.value_loss_coef,
+            args.max_grad_norm,
+            args.recurrence,
+            args.optim_eps,
+            args.clip_eps,
+            args.ppo_epochs,
+            args.batch_size,
+            obss_preprocessor,
+            reshape_reward,
+            env_seeds=env_seeds,
+            lr_schedule=args.lr_schedule,
+            total_frames=args.frames,
+            use_target_network=args.use_target_network,
+            target_update_freq=args.target_update_freq,
+            mixed_precision=args.mixed_precision,
+            # PPO-BR specific parameters
+            br_coef=args.br_coef,
+            reference_policy_path=args.reference_policy_path,
+            br_decay=args.br_decay,
+            br_min_coef=args.br_min_coef,
+        )
+    else:
+        raise ValueError(f"Incorrect algorithm name: {args.algo}. Choose 'ppo' or 'ppo-br'")
+
+    # Move model to the device chosen by the algorithm
+    acmodel.to(algo.device)
+
+    # Move MiniLM encoder to same device if using MiniLM
+    if (
+        hasattr(obss_preprocessor, "minilm_encoder")
+        and obss_preprocessor.minilm_encoder is not None
+    ):
+        obss_preprocessor.minilm_encoder.to(algo.device)
+        logger.info(f"Moved MiniLM encoder to device: {algo.device}")
+
+    # When using extra binary information, more tensors (model params) are initialized compared to when we don't use that.
+    # Thus, there starts to be a difference in the random state. If we want to avoid it, in order to make sure that
+    # the results of supervised-loss-coef=0. and extra-binary-info=0 match, we need to reseed here.
+
+    utils.seed(args.seed)
+
+    # Restore training status
+
+    status_path = os.path.join(utils.get_log_dir(args.model), "status.json")
+    if os.path.exists(status_path):
+        with open(status_path) as src:
+            status = json.load(src)
+    else:
+        status = {"i": 0, "num_episodes": 0, "num_frames": 0}
+
+    # Define logger and wandb and CSV writer
+
+    header = (
+        ["update", "episodes", "frames", "FPS", "duration"]
+        + ["return_" + stat for stat in ["mean", "std", "min", "max"]]
+        + ["success_rate"]
+        + ["num_frames_" + stat for stat in ["mean", "std", "min", "max"]]
+        + ["entropy", "value", "policy_loss", "value_loss", "loss", "grad_norm"]
+    )
+
+    # Add LR to header if using scheduler
+    if args.lr_schedule:
+        header.append("lr")
+
+    # Add PPO-BR specific metrics to header
+    if args.algo == "ppo-br":
+        header.extend(["br_loss", "br_coef"])
+
+    # Initialize wandb if requested
+    if args.tb:
+        try:
+            import wandb
+
+            wandb.init(project="toddler-ai", name=args.model, config=vars(args))
+        except ImportError:
+            logger.warning("wandb not installed. Install with: uv sync --extra tracking")
+            args.tb = False
+    csv_path = os.path.join(utils.get_log_dir(args.model), "log.csv")
+    first_created = not os.path.exists(csv_path)
+    # we don't buffer data going in the csv log, cause we assume
+    # that one update will take much longer that one write to the log
+    csv_writer = csv.writer(open(csv_path, "a", 1))
+    if first_created:
+        csv_writer.writerow(header)
+
+    # Log code state, command, availability of CUDA and model
+
+    toddler_ai_code = list(toddler_ai.__path__)[0]
+    try:
+        last_commit = subprocess.check_output(
+            f"cd {toddler_ai_code}; git log -n1", shell=True
+        ).decode("utf-8")
+        logger.info("LAST COMMIT INFO:")
+        logger.info(last_commit)
+    except subprocess.CalledProcessError:
+        logger.info("Could not figure out the last commit")
+    try:
+        diff = subprocess.check_output(f"cd {toddler_ai_code}; git diff", shell=True).decode(
+            "utf-8"
+        )
+        if diff:
+            logger.info("GIT DIFF:")
+            logger.info(diff)
+    except subprocess.CalledProcessError:
+        logger.info("Could not figure out the last commit")
+    logger.info("COMMAND LINE ARGS:")
+    logger.info(args)
+    logger.info(f"Device: {algo.device}")
+    logger.info(acmodel)
+
+    # Train model
+
+    total_start_time = time.time()
+    best_success_rate = 0
+    best_mean_return = 0
+    test_env_name = args.env
+
+    # Early stopping tracking
+    early_stop_counter = 0
+    early_stopped = False
+
+    while status["num_frames"] < args.frames and not early_stopped:
+        # Update parameters
+
+        update_start_time = time.time()
+        logs = algo.update_parameters()
+        update_end_time = time.time()
+
+        status["num_frames"] += logs["num_frames"]
+        status["num_episodes"] += logs["episodes_done"]
+        status["i"] += 1
+
+        # Update reference policy periodically for PPO-BR curriculum learning
+        if (
+            args.algo == "ppo-br"
+            and args.update_reference_interval
+            and status["i"] % args.update_reference_interval == 0
+        ):
+            algo.update_reference_policy()
+            logger.info(f"Updated reference policy at update {status['i']}")
+
+        # Print logs
+
+        if status["i"] % args.log_interval == 0:
+            total_ellapsed_time = int(time.time() - total_start_time)
+            fps = logs["num_frames"] / (update_end_time - update_start_time)
+            duration = datetime.timedelta(seconds=total_ellapsed_time)
+            return_per_episode = utils.synthesize(logs["return_per_episode"])
+            success_per_episode = utils.synthesize(
+                [1 if r > 0 else 0 for r in logs["return_per_episode"]]
+            )
+            num_frames_per_episode = utils.synthesize(logs["num_frames_per_episode"])
+
+            data = [
+                status["i"],
+                status["num_episodes"],
+                status["num_frames"],
+                fps,
+                total_ellapsed_time,
+                *return_per_episode.values(),
+                success_per_episode["mean"],
+                *num_frames_per_episode.values(),
+                logs["entropy"],
+                logs["value"],
+                logs["policy_loss"],
+                logs["value_loss"],
+                logs["loss"],
+                logs["grad_norm"],
+            ]
+
+            # Add LR to data if using scheduler
+            if args.lr_schedule and "lr" in logs:
+                data.append(logs["lr"])
+
+            # Add PPO-BR specific metrics
+            if args.algo == "ppo-br":
+                data.extend([logs["br_loss"], logs["br_coef"]])
+
+            format_str = (
+                "U {} | E {} | F {:06} | FPS {:04.0f} | D {} | R:xsmM {: .2f} {: .2f} {: .2f} {: .2f} | "
+                "S {:.2f} | F:xsmM {:.1f} {:.1f} {} {} | H {:.3f} | V {:.3f} | "
+                "pL {: .3f} | vL {:.3f} | L {:.3f} | gN {:.3f} | "
+            )
+
+            # Add LR to format string if using scheduler
+            if args.lr_schedule:
+                format_str += "LR {:.2e} | "
+
+            # Add PPO-BR metrics to format string
+            if args.algo == "ppo-br":
+                format_str += "BRL {:.3f} | BRC {:.3f} | "
+
+            logger.info(format_str.format(*data))
+            if args.tb:
+                import wandb
+
+                assert len(header) == len(data)
+                wandb.log(
+                    {key: float(value) for key, value in zip(header, data)},
+                    step=status["num_frames"],
+                )
+
+            csv_writer.writerow(data)
+
+        # Check early stopping (check every update, not just when logging)
+        if args.early_stop_threshold is not None and status["i"] % args.log_interval == 0:
+            success_per_episode_check = utils.synthesize(
+                [1 if r > 0 else 0 for r in logs["return_per_episode"]]
+            )
+            current_success_rate = success_per_episode_check["mean"]
+            if current_success_rate >= args.early_stop_threshold:
+                early_stop_counter += 1
+                if early_stop_counter >= args.early_stop_patience:
+                    logger.info(
+                        f"Early stopping: success rate {current_success_rate:.2f} >= {args.early_stop_threshold} for {early_stop_counter} updates"
+                    )
+                    early_stopped = True
+            else:
+                early_stop_counter = 0
+
+        # Save model
+
+        if args.save_interval > 0 and status["i"] % args.save_interval == 0:
+            with open(status_path, "w") as dst:
+                json.dump(status, dst)
+                utils.save_model(acmodel, args.model)
+
+            # Testing the model before saving
+            # Create a patched agent that handles both memory formats
+            class PatchedModelAgent(ModelAgent):
+                """Patched ModelAgent that handles different memory formats"""
+                def act_batch(self, many_obs):
+                    if self.memory is None:
+                        self.memory = torch.zeros(
+                            len(many_obs), self.model.memory_size, device=self.device)
+                    elif self.memory.shape[0] != len(many_obs):
+                        raise ValueError("stick to one batch size for the lifetime of an agent")
+                    preprocessed_obs = self.obss_preprocessor(many_obs, device=self.device)
+
+                    with torch.no_grad():
+                        model_results = self.model(preprocessed_obs, self.memory)
+                        dist = model_results['dist']
+                        value = model_results['value']
+
+                        # Handle different memory formats based on what's returned
+                        if 'new_memory' in model_results:
+                            # unified_vit architecture uses 'new_memory'
+                            if hasattr(self.model, 'embed_dim') and self.model.memory_size > 0:
+                                embed_dim = self.model.embed_dim
+                                new_memory = torch.zeros_like(self.memory)
+                                new_memory[:, :-embed_dim] = self.memory[:, embed_dim:]
+                                new_memory[:, -embed_dim:] = model_results['new_memory']
+                                self.memory = new_memory
+                        elif 'memory' in model_results:
+                            # Standard memory format (vit, film, etc.)
+                            self.memory = model_results['memory']
+
+                    if self.argmax:
+                        action = dist.probs.argmax(1)
+                    else:
+                        action = dist.sample()
+
+                    return {'action': action, 'dist': dist, 'value': value}
+            
+            agent = PatchedModelAgent(args.model, obss_preprocessor, argmax=True)
+            agent.model = acmodel
+            agent.model.eval()
+            # Ensure preprocessor encoder is on correct device for evaluation
+            if (
+                hasattr(obss_preprocessor, "minilm_encoder")
+                and obss_preprocessor.minilm_encoder is not None
+            ):
+                obss_preprocessor.minilm_encoder.to(algo.device)
+            
+            logs = batch_evaluate(
+                agent, test_env_name, args.val_seed, args.val_episodes, pixel=use_pixel
+            )
+            
+            agent.model.train()
+            mean_return = np.mean(logs["return_per_episode"])
+            success_rate = np.mean([1 if r > 0 else 0 for r in logs["return_per_episode"]])
+            save_model = False
+            if success_rate > best_success_rate:
+                best_success_rate = success_rate
+                save_model = True
+            elif (success_rate == best_success_rate) and (mean_return > best_mean_return):
+                best_mean_return = mean_return
+                save_model = True
+            if save_model:
+                utils.save_model(acmodel, args.model, suffix="best")
+                logger.info(f"Return {mean_return: .2f}; best model is saved")
+            else:
+                logger.info(f"Return {mean_return: .2f}; not the best model; not saved")
