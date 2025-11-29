@@ -11,6 +11,7 @@ import logging
 import os
 import subprocess
 import time
+import torch
 
 import gymnasium as gym
 import numpy as np
@@ -19,13 +20,14 @@ from minigrid.wrappers import RGBImgPartialObsWrapper
 import toddler_ai
 import toddler_ai.utils as utils
 from toddler_ai.algorithms import PPOAlgo
+from toddler_ai.algorithms.ppo_br import PPOBRAlgo  # Import PPO-BR
 from toddler_ai.utils.agent import ModelAgent
 from toddler_ai.utils.arguments import ArgumentParser
 from toddler_ai.utils.evaluate import batch_evaluate
 
 # Parse arguments
 parser = ArgumentParser()
-parser.add_argument("--algo", default="ppo", help="algorithm to use (default: ppo)")
+parser.add_argument("--algo", default="ppo", help="algorithm to use: ppo or ppo-br (default: ppo)")
 parser.add_argument("--discount", type=float, default=0.99, help="discount factor (default: 0.99)")
 parser.add_argument(
     "--reward-scale",
@@ -97,6 +99,40 @@ parser.add_argument(
     default=False,
     help="enable mixed precision training (FP16) for faster training and lower memory (default: False)",
 )
+
+# PPO-BR specific arguments
+parser.add_argument(
+    "--br-coef",
+    type=float,
+    default=0.1,
+    help="behavioral reference loss coefficient for PPO-BR (default: 0.1)",
+)
+parser.add_argument(
+    "--reference-policy-path",
+    type=str,
+    default=None,
+    help="path to reference policy checkpoint for PPO-BR (default: None, uses initial policy)",
+)
+parser.add_argument(
+    "--br-decay",
+    type=str,
+    default=None,
+    choices=[None, "linear", "exponential"],
+    help="decay schedule for BR coefficient: None, linear, or exponential (default: None)",
+)
+parser.add_argument(
+    "--br-min-coef",
+    type=float,
+    default=0.01,
+    help="minimum BR coefficient after decay (default: 0.01)",
+)
+parser.add_argument(
+    "--update-reference-interval",
+    type=int,
+    default=None,
+    help="update reference policy every N updates for curriculum learning (default: None, no updates)",
+)
+
 args = parser.parse_args()
 
 if __name__ == "__main__":
@@ -144,7 +180,6 @@ if __name__ == "__main__":
         args.model,
         envs[0].observation_space,
         freeze_encoder=getattr(args, "freeze_minilm", False),
-        encoder_from_model=args.pretrained_model,  # Load encoder from pretrained model if specified
     )
     logger.info("Using bert-tiny text encoder")
 
@@ -200,7 +235,7 @@ if __name__ == "__main__":
                     f"Unsupported architecture: {args.arch}. Supported: unified_vit, vit"
                 )
 
-    utils.save_model(acmodel, args.model, preprocessor=obss_preprocessor)
+    utils.save_model(acmodel, args.model)
 
     # Define actor-critic algo
     # Note: Algorithm decides device (may use CPU instead of MPS due to PyTorch limitations)
@@ -235,8 +270,46 @@ if __name__ == "__main__":
             target_update_freq=args.target_update_freq,
             mixed_precision=args.mixed_precision,
         )
+    elif args.algo == "ppo-br":
+        logger.info(f"Using PPO-BR with br_coef={args.br_coef}, br_decay={args.br_decay}")
+        if args.reference_policy_path:
+            logger.info(f"Loading reference policy from: {args.reference_policy_path}")
+        else:
+            logger.info("Using initial policy as reference")
+        
+        algo = PPOBRAlgo(
+            envs,
+            acmodel,
+            args.frames_per_proc,
+            args.discount,
+            args.lr,
+            args.beta1,
+            args.beta2,
+            args.gae_lambda,
+            args.entropy_coef,
+            args.value_loss_coef,
+            args.max_grad_norm,
+            args.recurrence,
+            args.optim_eps,
+            args.clip_eps,
+            args.ppo_epochs,
+            args.batch_size,
+            obss_preprocessor,
+            reshape_reward,
+            env_seeds=env_seeds,
+            lr_schedule=args.lr_schedule,
+            total_frames=args.frames,
+            use_target_network=args.use_target_network,
+            target_update_freq=args.target_update_freq,
+            mixed_precision=args.mixed_precision,
+            # PPO-BR specific parameters
+            br_coef=args.br_coef,
+            reference_policy_path=args.reference_policy_path,
+            br_decay=args.br_decay,
+            br_min_coef=args.br_min_coef,
+        )
     else:
-        raise ValueError(f"Incorrect algorithm name: {args.algo}")
+        raise ValueError(f"Incorrect algorithm name: {args.algo}. Choose 'ppo' or 'ppo-br'")
 
     # Move model to the device chosen by the algorithm
     acmodel.to(algo.device)
@@ -277,6 +350,10 @@ if __name__ == "__main__":
     # Add LR to header if using scheduler
     if args.lr_schedule:
         header.append("lr")
+
+    # Add PPO-BR specific metrics to header
+    if args.algo == "ppo-br":
+        header.extend(["br_loss", "br_coef"])
 
     # Initialize wandb if requested
     if args.tb:
@@ -342,6 +419,15 @@ if __name__ == "__main__":
         status["num_episodes"] += logs["episodes_done"]
         status["i"] += 1
 
+        # Update reference policy periodically for PPO-BR curriculum learning
+        if (
+            args.algo == "ppo-br"
+            and args.update_reference_interval
+            and status["i"] % args.update_reference_interval == 0
+        ):
+            algo.update_reference_policy()
+            logger.info(f"Updated reference policy at update {status['i']}")
+
         # Print logs
 
         if status["i"] % args.log_interval == 0:
@@ -375,6 +461,10 @@ if __name__ == "__main__":
             if args.lr_schedule and "lr" in logs:
                 data.append(logs["lr"])
 
+            # Add PPO-BR specific metrics
+            if args.algo == "ppo-br":
+                data.extend([logs["br_loss"], logs["br_coef"]])
+
             format_str = (
                 "U {} | E {} | F {:06} | FPS {:04.0f} | D {} | R:xsmM {: .2f} {: .2f} {: .2f} {: .2f} | "
                 "S {:.2f} | F:xsmM {:.1f} {:.1f} {} {} | H {:.3f} | V {:.3f} | "
@@ -384,6 +474,10 @@ if __name__ == "__main__":
             # Add LR to format string if using scheduler
             if args.lr_schedule:
                 format_str += "LR {:.2e} | "
+
+            # Add PPO-BR metrics to format string
+            if args.algo == "ppo-br":
+                format_str += "BRL {:.3f} | BRC {:.3f} | "
 
             logger.info(format_str.format(*data))
             if args.tb:
@@ -418,10 +512,46 @@ if __name__ == "__main__":
         if args.save_interval > 0 and status["i"] % args.save_interval == 0:
             with open(status_path, "w") as dst:
                 json.dump(status, dst)
-                utils.save_model(acmodel, args.model, preprocessor=obss_preprocessor)
+                utils.save_model(acmodel, args.model)
 
             # Testing the model before saving
-            agent = ModelAgent(args.model, obss_preprocessor, argmax=True)
+            # Create a patched agent that handles both memory formats
+            class PatchedModelAgent(ModelAgent):
+                """Patched ModelAgent that handles different memory formats"""
+                def act_batch(self, many_obs):
+                    if self.memory is None:
+                        self.memory = torch.zeros(
+                            len(many_obs), self.model.memory_size, device=self.device)
+                    elif self.memory.shape[0] != len(many_obs):
+                        raise ValueError("stick to one batch size for the lifetime of an agent")
+                    preprocessed_obs = self.obss_preprocessor(many_obs, device=self.device)
+
+                    with torch.no_grad():
+                        model_results = self.model(preprocessed_obs, self.memory)
+                        dist = model_results['dist']
+                        value = model_results['value']
+
+                        # Handle different memory formats based on what's returned
+                        if 'new_memory' in model_results:
+                            # unified_vit architecture uses 'new_memory'
+                            if hasattr(self.model, 'embed_dim') and self.model.memory_size > 0:
+                                embed_dim = self.model.embed_dim
+                                new_memory = torch.zeros_like(self.memory)
+                                new_memory[:, :-embed_dim] = self.memory[:, embed_dim:]
+                                new_memory[:, -embed_dim:] = model_results['new_memory']
+                                self.memory = new_memory
+                        elif 'memory' in model_results:
+                            # Standard memory format (vit, film, etc.)
+                            self.memory = model_results['memory']
+
+                    if self.argmax:
+                        action = dist.probs.argmax(1)
+                    else:
+                        action = dist.sample()
+
+                    return {'action': action, 'dist': dist, 'value': value}
+            
+            agent = PatchedModelAgent(args.model, obss_preprocessor, argmax=True)
             agent.model = acmodel
             agent.model.eval()
             # Ensure preprocessor encoder is on correct device for evaluation
@@ -430,9 +560,11 @@ if __name__ == "__main__":
                 and obss_preprocessor.minilm_encoder is not None
             ):
                 obss_preprocessor.minilm_encoder.to(algo.device)
+            
             logs = batch_evaluate(
                 agent, test_env_name, args.val_seed, args.val_episodes, pixel=use_pixel
             )
+            
             agent.model.train()
             mean_return = np.mean(logs["return_per_episode"])
             success_rate = np.mean([1 if r > 0 else 0 for r in logs["return_per_episode"]])
@@ -444,7 +576,7 @@ if __name__ == "__main__":
                 best_mean_return = mean_return
                 save_model = True
             if save_model:
-                utils.save_model(acmodel, args.model, suffix="best", preprocessor=obss_preprocessor)
+                utils.save_model(acmodel, args.model, suffix="best")
                 logger.info(f"Return {mean_return: .2f}; best model is saved")
             else:
                 logger.info(f"Return {mean_return: .2f}; not the best model; not saved")
