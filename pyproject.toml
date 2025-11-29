@@ -15,7 +15,9 @@ dependencies = [
     "pygame>=2.4.0",
     "torch>=2.0.0",
     "blosc>=1.11.0",
-    "sentence-transformers>=2.2.0",  # Required for MiniLM language encoder
+    "sentence-transformers>=2.2.0", # Required for MiniLM language encoder
+    "matplotlib>=3.10.7",
+    "scikit-learn>=1.7.2",
 ]
 
 [project.optional-dependencies]

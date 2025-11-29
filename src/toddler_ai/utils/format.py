@@ -67,13 +67,15 @@ class MiniLMPreprocessor(ObservationPreprocessor):
     """
     def __init__(self, model_name, obs_space=None,
                  model_name_minilm='prajjwal1/bert-tiny',
-                 freeze_encoder=False):
+                 freeze_encoder=False,
+                 encoder_from_model=None):
         self.image_preproc = RawImagePreprocessor()
         self.freeze_encoder = freeze_encoder
 
         # Load bert-tiny encoder
         import logging
         from transformers import AutoModel, AutoTokenizer
+        from toddler_ai.utils.model import load_encoder
         logger = logging.getLogger(__name__)
         logger.info(f'Loading language model: {model_name_minilm}')
 
@@ -82,6 +84,20 @@ class MiniLMPreprocessor(ObservationPreprocessor):
 
         encoder_params = sum(p.numel() for p in self.minilm_encoder.parameters())
         logger.info(f'  Encoder: {encoder_params/1e6:.1f}M params, 128-dim output')
+
+        # Try to load trained encoder weights if they exist
+        # Use encoder_from_model if specified (for loading from pretrained model),
+        # otherwise use model_name (for resuming training)
+        load_from = encoder_from_model if encoder_from_model is not None else model_name
+        encoder_state = load_encoder(load_from)
+        if encoder_state is not None:
+            self.minilm_encoder.load_state_dict(encoder_state)
+            if encoder_from_model:
+                logger.info(f'  Loaded trained encoder weights from {encoder_from_model}')
+            else:
+                logger.info('  Loaded trained encoder weights from checkpoint')
+        else:
+            logger.info('  No trained encoder weights found, using pretrained bert-tiny')
 
         # Set trainability
         if freeze_encoder:

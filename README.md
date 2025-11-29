@@ -112,6 +112,33 @@ uv run python scripts/evaluate.py \
     --episodes 100
 ```
 
+### 5. Visualize
+
+Watch your trained agent play episodes in real-time:
+
+```bash
+uv run python scripts/visualize_agent.py \
+    --env BabyAI-GoToRedBallGrey-v0 \
+    --model my_model \
+    --episodes 5 \
+    --delay 0.5
+```
+
+The visualization opens a live window showing the agent's view and prints step-by-step actions and values. Adjust `--delay` to control playback speed (0.3 = fast, 0.5 = medium, 1.0 = slow).
+
+## Curriculum Learning
+
+This project demonstrates a 4-phase curriculum from simple to complex tasks, with language learning accumulating across phases via persistent encoder weights:
+
+| Phase | Task | Environment | Training Approach |
+|-------|------|-------------|-------------------|
+| P1 | GoToRedBallGrey | Single room, one object type | IL→PPO baseline |
+| P2 | GoToLocal | Color/type variations | Curriculum transfer + PPO |
+| P3 | GoToObj | Multiple object types | Curriculum transfer + PPO |
+| P4 | GoToObjMaze | Multi-room maze navigation | Curriculum transfer + PPO |
+
+**Key Innovation**: bert-tiny encoder weights are saved and transferred between curriculum phases, allowing language understanding to accumulate progressively. Each phase builds on the linguistic knowledge learned in previous phases.
+
 ## Project Structure
 
 ```
@@ -129,8 +156,10 @@ toddler-ai/
 │   ├── train_il.py                 # IL training
 │   ├── train_rl.py                 # RL training
 │   ├── make_demos.py               # Demo generation
-│   └── evaluate.py                 # Evaluation
-└── demos/                          # Saved demonstrations
+│   ├── evaluate.py                 # Evaluation
+│   └── visualize_agent.py          # Live visualization
+├── demos/                          # Saved demonstrations
+└── models/                         # Trained model checkpoints
 ```
 
 ## Hardware

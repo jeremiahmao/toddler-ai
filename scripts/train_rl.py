@@ -144,6 +144,7 @@ if __name__ == "__main__":
         args.model,
         envs[0].observation_space,
         freeze_encoder=getattr(args, "freeze_minilm", False),
+        encoder_from_model=args.pretrained_model,  # Load encoder from pretrained model if specified
     )
     logger.info("Using bert-tiny text encoder")
 
@@ -199,7 +200,7 @@ if __name__ == "__main__":
                     f"Unsupported architecture: {args.arch}. Supported: unified_vit, vit"
                 )
 
-    utils.save_model(acmodel, args.model)
+    utils.save_model(acmodel, args.model, preprocessor=obss_preprocessor)
 
     # Define actor-critic algo
     # Note: Algorithm decides device (may use CPU instead of MPS due to PyTorch limitations)
@@ -417,7 +418,7 @@ if __name__ == "__main__":
         if args.save_interval > 0 and status["i"] % args.save_interval == 0:
             with open(status_path, "w") as dst:
                 json.dump(status, dst)
-                utils.save_model(acmodel, args.model)
+                utils.save_model(acmodel, args.model, preprocessor=obss_preprocessor)
 
             # Testing the model before saving
             agent = ModelAgent(args.model, obss_preprocessor, argmax=True)
@@ -443,7 +444,7 @@ if __name__ == "__main__":
                 best_mean_return = mean_return
                 save_model = True
             if save_model:
-                utils.save_model(acmodel, args.model, suffix="best")
+                utils.save_model(acmodel, args.model, suffix="best", preprocessor=obss_preprocessor)
                 logger.info(f"Return {mean_return: .2f}; best model is saved")
             else:
                 logger.info(f"Return {mean_return: .2f}; not the best model; not saved")

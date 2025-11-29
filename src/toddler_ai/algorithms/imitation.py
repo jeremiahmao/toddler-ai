@@ -180,7 +180,7 @@ class ImitationLearning(object):
                     )
                 else:
                     raise ValueError(f"Unsupported architecture: {self.args.arch}. Use 'vit' or 'unified_vit'.")
-        utils.save_model(self.acmodel, args.model)
+        utils.save_model(self.acmodel, args.model, preprocessor=self.obss_preprocessor)
 
         self.acmodel.train()
 
@@ -551,7 +551,7 @@ class ImitationLearning(object):
             logger.info("Batch size too high. Setting it to the number of train demos ({})".format(len(train_demos)))
 
         # Model saved initially to avoid "Model not found Exception" during first validation step
-        utils.save_model(self.acmodel, self.args.model)
+        utils.save_model(self.acmodel, self.args.model, preprocessor=self.obss_preprocessor)
 
         # best mean return to keep track of performance on validation set
         # Handle old status files that don't have best_success_rate
@@ -648,7 +648,7 @@ class ImitationLearning(object):
 
                     if torch.cuda.is_available():
                         self.acmodel.cpu()
-                    utils.save_model(self.acmodel, self.args.model, suffix="best")
+                    utils.save_model(self.acmodel, self.args.model, suffix="best", preprocessor=self.obss_preprocessor)
                     self.acmodel.to(self.device)
                 else:
                     status['patience'] += 1
@@ -656,7 +656,7 @@ class ImitationLearning(object):
                         "Losing patience, new value={}, limit={}".format(status['patience'], self.args.patience))
 
                 self.acmodel.cpu()
-                utils.save_model(self.acmodel, self.args.model)
+                utils.save_model(self.acmodel, self.args.model, preprocessor=self.obss_preprocessor)
                 self.acmodel.to(self.device)
                 with open(status_path, 'w') as dst:
                     json.dump(status, dst)
