@@ -94,6 +94,11 @@ IL→PPO is a well-established approach:
 - **Avoiding local minima**: Random initialization often gets stuck; starting from a competent policy means PPO optimizes in a good region
 - **Complementary strengths**: IL copies behavior but can't improve beyond demos; PPO optimizes for reward but needs good exploration. Combined: IL provides exploration, PPO provides optimization
 
+**When to use IL vs PPO:**
+- **New action types**: Use IL first when introducing new actions (e.g., "toggle" for doors, "pickup" for objects). PPO struggles to discover rare action sequences from random exploration.
+- **Expanding capabilities**: Once core actions are learned via IL, PPO can naturally expand to variations and harder instances of the same task type.
+- **Hardware considerations**: IL requires storing and sampling from demonstration buffers, which can be memory-intensive for large environments. PPO uses on-policy experience and may be more hardware-efficient in such cases.
+
 ```bash
 uv run python scripts/train_rl.py \
     --env BabyAI-GoToRedBallGrey-v0 \
@@ -130,14 +135,17 @@ The visualization opens a live window showing the agent's view and prints step-b
 
 This project demonstrates a 4-phase curriculum from simple to complex tasks, with language learning accumulating across phases via persistent encoder weights:
 
-| Phase | Task | Environment | Training Approach |
-|-------|------|-------------|-------------------|
-| P1 | GoToRedBallGrey | Single room, one object type | IL→PPO baseline |
-| P2 | GoToLocal | Color/type variations | Curriculum transfer + PPO |
-| P3 | GoToObj | Multiple object types | Curriculum transfer + PPO |
-| P4 | GoToObjMaze | Multi-room maze navigation | Curriculum transfer + PPO |
+| Phase | Task | Environment | Training Approach | Notes |
+|-------|------|-------------|-------------------|-------|
+| P1 | GoToRedBallGrey | Single room, one object type | IL→PPO baseline | Learn basic navigation |
+| P2 | GoToLocal | Color/type variations | Curriculum transfer + PPO | Expand vocabulary (colors, objects) |
+| P3 | GoToObj | Multiple object types | Curriculum transfer + PPO | Generalize to more objects |
+| P4 | GoToObjMaze | Multi-room maze navigation | **IL for doors** → PPO | Learn "toggle" action via IL first |
 
-**Key Innovation**: bert-tiny encoder weights are saved and transferred between curriculum phases, allowing language understanding to accumulate progressively. Each phase builds on the linguistic knowledge learned in previous phases.
+**Key Insights**:
+- **Language accumulation**: bert-tiny encoder weights are saved and transferred between phases, allowing vocabulary and language understanding to accumulate progressively
+- **New actions require IL**: Introducing the "toggle" action in P4 (for opening doors) is best learned via imitation learning first, as PPO struggles to discover door-opening from random exploration
+- **Curriculum gaps**: Large task structure changes (single room → multi-room maze) benefit from demonstrations showing the new mechanic, then PPO can expand and optimize
 
 ## Project Structure
 

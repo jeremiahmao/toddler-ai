@@ -89,5 +89,13 @@ dmypy.json
 *.h5
 *.hdf5
 
+# Media/Visualizations
+*.gif
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.avi
+
 # Logs
 *.log
